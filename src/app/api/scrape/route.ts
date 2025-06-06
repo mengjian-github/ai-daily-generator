@@ -1,155 +1,228 @@
 import { NextResponse } from "next/server";
-import puppeteer, { Page } from "puppeteer";
+import * as cheerio from "cheerio";
 
 const DAILY_URL = "https://www.aibase.com/zh/daily";
 
-async function getLatestDailyArticle(page: Page) {
-    await page.goto(DAILY_URL, { waitUntil: 'networkidle0' });
+interface Article {
+    title: string;
+    date: string;
+    description: string;
+    source: string;
+    url: string;
+    image: string;
+    topics: Topic[];
+}
 
-    const latestDailyUrl = await page.evaluate((url: string) => {
-        const link = document.querySelector('main a[href^="/zh/daily/"]');
-        if (link) {
-            return new URL(link.getAttribute('href')!, url).href;
-        }
-        return null;
-    }, DAILY_URL);
+interface Topic {
+    id: number;
+    title: string;
+    summary: string;
+    url: string;
+    image: string;
+    video?: string;
+}
 
+async function fetchWithHeaders(url: string): Promise<string> {
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,zh-TW;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+    };
 
-    if (!latestDailyUrl) {
-        throw new Error("Could not find the link to the latest daily report on the main page.");
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
     }
+    return await response.text();
+}
 
-    await page.goto(latestDailyUrl, { waitUntil: 'networkidle0' });
+async function getLatestDailyArticle(): Promise<Article> {
+    try {
+        // 1. 获取日报列表页面
+        const listPageHtml = await fetchWithHeaders(DAILY_URL);
+        const $list = cheerio.load(listPageHtml);
 
-    const articleData = await page.evaluate(() => {
-        const article = document.querySelector('article');
-        if (!article) return null;
+                        // 2. 找到最新的日报链接，确保是中文版本
+        let latestDailyPath = $list('a[href*="/zh/daily/"]').first().attr('href');
 
-        const title = article.querySelector('h1')?.textContent?.trim() || '';
-        const dateElement = article.querySelector('time, [datetime], .date'); // More robust date selector
-        const dateText = dateElement ? (dateElement.getAttribute('datetime') || dateElement.textContent?.trim()) :
-            Array.from(article.querySelectorAll('div > span')).find(span => span.textContent?.includes('202'))?.textContent?.trim() || '';
+        if (!latestDailyPath) {
+            // 备用方案：查找包含daily的链接，然后确保是中文版本
+            const dailyLinks = $list('a[href*="/daily/"]');
+            dailyLinks.each((i, link) => {
+                const href = $list(link).attr('href');
+                if (href && (href.includes('/zh/') || !href.includes('/en/'))) {
+                    latestDailyPath = href;
+                    return false; // 停止循环
+                }
+            });
+        }
 
+        if (!latestDailyPath) {
+            throw new Error("Could not find the link to the latest daily report");
+        }
 
-        const description = article.querySelector('p')?.textContent?.trim() || '';
-        const source = "AIbase 日报";
-
-        const topics = Array.from(article.querySelectorAll('p > strong')).map((strong, index) => {
-            const titleElement = strong;
-            const titleText = titleElement?.textContent?.trim() || '';
-
-            // Skip if it's not a real topic entry
-            if (!/^\d+、/.test(titleText) && !titleText.includes('.')) {
-                return null;
+        // 确保链接是中文版本
+        if (!latestDailyPath.includes('/zh/')) {
+            // 如果链接不包含/zh/，转换为中文版本
+            if (latestDailyPath.startsWith('/daily/')) {
+                latestDailyPath = latestDailyPath.replace('/daily/', '/zh/daily/');
+            } else if (latestDailyPath.match(/^\/\w+\/daily\//)) {
+                // 如果是其他语言版本，替换为中文版本
+                latestDailyPath = latestDailyPath.replace(/^\/\w+\/daily\//, '/zh/daily/');
             }
+        }
+
+        const latestDailyUrl = new URL(latestDailyPath, DAILY_URL).href;
+
+        // 3. 获取日报详情页面
+        const detailPageHtml = await fetchWithHeaders(latestDailyUrl);
+        const $ = cheerio.load(detailPageHtml);
+
+        // 4. 提取基本信息
+        const article = $('article').first();
+        if (article.length === 0) {
+            throw new Error("Could not find article element");
+        }
+
+        const title = article.find('h1').text().trim() || '';
+
+        // 尝试多种方式获取日期
+        let dateText = '';
+        const timeElement = article.find('time').first();
+        if (timeElement.length > 0) {
+            dateText = timeElement.attr('datetime') || timeElement.text().trim();
+        }
+
+        if (!dateText) {
+            // 备用方案：在页面中搜索包含年份的文本
+            article.find('*').each((_, element) => {
+                const text = $(element).text().trim();
+                if (text.includes('202') && text.match(/\d{4}/) && !dateText) {
+                    dateText = text;
+                    return false; // 相当于break
+                }
+            });
+        }
+
+        const description = article.find('p').first().text().trim() || '';
+        const source = "AIbase 日报";
+        const image = article.find('img').first().attr('src') || '';
+
+        // 5. 提取主题内容
+        const topics: Topic[] = [];
+        let topicIndex = 0;
+
+        article.find('p > strong').each((index, element) => {
+            const $strong = $(element);
+            const titleText = $strong.text().trim();
+
+            // 检查是否是有效的主题标题（以数字开头）
+            if (!/^\d+[、.]\s*/.test(titleText) && !titleText.includes('.')) {
+                return; // 继续下一个
+            }
+
             const title = titleText.replace(/^\d+[、.]\s*/, '').trim();
-
-
             let summary = '';
             let image = '';
             let video = '';
             let detailUrl = '';
 
-            let currentNode: Element | null = strong.parentElement;
+            // 查找相关内容
+            let $current = $strong.parent();
 
-            while (currentNode?.nextElementSibling) {
-                currentNode = currentNode.nextElementSibling;
-                if (currentNode.tagName === 'P' && (currentNode.querySelector('strong'))) {
-                     const nextStrongText = currentNode.querySelector('strong')?.textContent?.trim() || '';
-                     if (/^\d+[、.]\s*/.test(nextStrongText)) {
-                        break; // Stop if we've hit the next numbered topic
-                     }
-                }
+            while ($current.next().length > 0) {
+                $current = $current.next();
 
-                if (currentNode.tagName === 'P') {
-                     const imgInP = currentNode.querySelector('img');
-                     if(imgInP && !image) {
-                        image = imgInP.src;
-                     }
-                     const videoInP = currentNode.querySelector('video');
-                     if(videoInP && !video) {
-                        video = videoInP.src || videoInP.querySelector('source')?.src || '';
-                     }
-                }
-
-
-                if (currentNode.tagName === 'BLOCKQUOTE') {
-                    const points = Array.from(currentNode.querySelectorAll('p')).map(p => p.textContent?.trim());
-                    points.shift(); // remove 【AiBase提要:】
-
-                    const linkPoint = points.find(p => p && p.startsWith('详情链接:'));
-                    if (linkPoint) {
-                        detailUrl = linkPoint.replace('详情链接:', '').trim();
+                // 如果遇到下一个主题，停止
+                const nextStrong = $current.find('strong').first();
+                if (nextStrong.length > 0) {
+                    const nextStrongText = nextStrong.text().trim();
+                    if (/^\d+[、.]\s*/.test(nextStrongText)) {
+                        break;
                     }
-                    summary = points.filter(p => p && !p.startsWith('详情链接:')).join('\\n');
-                } else if (currentNode.tagName === 'P') {
-                    summary += (summary ? '\\n' : '') + currentNode.textContent?.trim();
                 }
 
+                // 提取图片
+                if ($current.is('p')) {
+                    const img = $current.find('img').first();
+                    if (img.length > 0 && !image) {
+                        image = img.attr('src') || '';
+                    }
+
+                    // 提取视频
+                    const videoElement = $current.find('video').first();
+                    if (videoElement.length > 0 && !video) {
+                        video = videoElement.attr('src') || videoElement.find('source').first().attr('src') || '';
+                    }
+                }
+
+                // 提取摘要内容
+                if ($current.is('blockquote')) {
+                    const points: string[] = [];
+                    $current.find('p').each((_, p) => {
+                        const text = $(p).text().trim();
+                        if (text && !text.startsWith('【AiBase提要')) {
+                            if (text.startsWith('详情链接:')) {
+                                detailUrl = text.replace('详情链接:', '').trim();
+                            } else {
+                                points.push(text);
+                            }
+                        }
+                    });
+                    summary = points.join('\n');
+                } else if ($current.is('p')) {
+                    const text = $current.text().trim();
+                    if (text) {
+                        summary += (summary ? '\n' : '') + text;
+                    }
+                }
             }
 
-
-            return {
-                id: index,
-                title: title,
-                summary: summary,
-                url: detailUrl, // Use the extracted detail url
-                image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+Daily',
-                video: video
-            };
-        }).filter(topic => topic && topic.title); // Filter out any empty or invalid topics
+            if (title) {
+                topics.push({
+                    id: topicIndex++,
+                    title,
+                    summary,
+                    url: detailUrl,
+                    image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+Daily',
+                    video
+                });
+            }
+        });
 
         return {
             title,
             date: dateText,
             description,
             source,
-            url: window.location.href,
-            image: (article.querySelector('img') as HTMLImageElement)?.src || '',
-            topics,
+            url: latestDailyUrl,
+            image,
+            topics
         };
-    });
-
-    if (!articleData) {
-        throw new Error("Failed to extract article data from the detail page. The page structure may have changed.");
-    }
-
-    return articleData;
-}
-
-
-export async function GET() {
-    let browser = null;
-    try {
-                browser = await puppeteer.launch({
-            headless: true,
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--window-size=1920x1080',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-extensions'
-            ]
-        });
-        const page = await browser.newPage();
-
-        const dailyReportArticle = await getLatestDailyArticle(page);
-
-        return NextResponse.json({ articles: [dailyReportArticle] });
 
     } catch (error) {
-        console.error("Playwright scraping error:", error);
+        console.error("Cheerio scraping error:", error);
+        throw error;
+    }
+}
+
+export async function GET() {
+    try {
+        const dailyReportArticle = await getLatestDailyArticle();
+        return NextResponse.json({ articles: [dailyReportArticle] });
+    } catch (error) {
+        console.error("Scraping error:", error);
         const errorMessage = error instanceof Error ? error.message : "An error occurred during scraping";
         return NextResponse.json({ error: errorMessage }, { status: 500 });
-    } finally {
-        if (browser) {
-            await browser.close();
-        }
     }
 }
