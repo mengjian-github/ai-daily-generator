@@ -104,14 +104,22 @@ async function getLatestDailyArticle(): Promise<Article> {
         }
 
         if (!dateText) {
-            // 备用方案：在页面中搜索包含年份的文本
+            // 备用方案：查找日期格式的文本
             article.find('*').each((_, element) => {
                 const text = $(element).text().trim();
-                if (text.includes('202') && text.match(/\d{4}/) && !dateText) {
-                    dateText = text;
+                // 匹配日期格式：YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD 或 Jun 6, 2025等
+                const dateMatch = text.match(/(?:202[0-9][-/.]\d{1,2}[-/.]\d{1,2})|(?:[A-Z][a-z]{2}\s+\d{1,2},?\s+202[0-9])|(?:\d{1,2}月\d{1,2}日)|(?:202[0-9]年\d{1,2}月\d{1,2}日)/);
+                if (dateMatch && !dateText && text.length < 50) { // 确保不是长文本
+                    dateText = dateMatch[0];
                     return false; // 相当于break
                 }
             });
+
+            // 如果还是没找到，使用当前日期
+            if (!dateText) {
+                const now = new Date();
+                dateText = now.toISOString().split('T')[0]; // YYYY-MM-DD格式
+            }
         }
 
         const description = article.find('p').first().text().trim() || '';
@@ -166,7 +174,7 @@ async function getLatestDailyArticle(): Promise<Article> {
                     }
                 }
 
-                // 提取摘要内容（限制长度，保持简洁）
+                // 提取摘要内容
                 if ($current.is('blockquote')) {
                     const points: string[] = [];
                     $current.find('p').each((_, p) => {
@@ -174,19 +182,16 @@ async function getLatestDailyArticle(): Promise<Article> {
                         if (text && !text.startsWith('【AiBase提要')) {
                             if (text.startsWith('详情链接:')) {
                                 detailUrl = text.replace('详情链接:', '').trim();
-                            } else if (points.length < 2) { // 只取前2个要点
+                            } else {
                                 points.push(text);
                             }
                         }
                     });
                     summary = points.join('\n');
-                } else if ($current.is('p') && summary.length < 200) { // 限制summary长度
+                } else if ($current.is('p')) {
                     const text = $current.text().trim();
-                    if (text && !text.includes('详情链接') && !text.includes('http')) {
-                        const newSummary = summary + (summary ? '\n' : '') + text;
-                        if (newSummary.length <= 200) {
-                            summary = newSummary;
-                        }
+                    if (text) {
+                        summary += (summary ? '\n' : '') + text;
                     }
                 }
             }
