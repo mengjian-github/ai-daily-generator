@@ -1,61 +1,58 @@
 import { NextResponse } from "next/server";
-import * as cheerio from "cheerio";
+import { chromium } from "playwright";
 
 export async function GET() {
+  let browser;
   try {
-    const response = await fetch("https://news.aibase.cn/news", {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
-      },
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    });
+    const page = await context.newPage();
+
+    // Navigate to the page and wait for it to be fully loaded
+    await page.goto("https://news.aibase.cn/news", {
+      waitUntil: "networkidle",
+      timeout: 30000,
     });
 
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: `Failed to fetch AIbase page. Status: ${response.status}` },
-        { status: 500 }
-      );
-    }
+    // The content is now expected to be loaded, proceed with evaluation
+    const articles = await page.evaluate(() => {
+      const articles: any[] = [];
+      document.querySelectorAll(".media.py-3").forEach((element, index) => {
+        const titleElement = element.querySelector("h4.media-heading a");
+        const title = titleElement?.textContent?.trim();
+        let url = titleElement?.getAttribute("href");
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
+        const imageElement = element.querySelector("img");
+        let imageUrl = imageElement?.getAttribute("src");
 
-    const articles: any[] = [];
-    $(".media.py-3").each((index, element) => {
-      const titleElement = $(element).find("h4.media-heading a");
-      const title = titleElement.text().trim();
-      let url = titleElement.attr("href");
+        if (title && url && imageUrl) {
+          if (url.startsWith("/")) {
+            url = `https://news.aibase.cn${url}`;
+          }
+          if (imageUrl.startsWith("/")) {
+            imageUrl = `https://news.aibase.cn${imageUrl}`;
+          }
 
-      const imageElement = $(element).find("img");
-      let imageUrl = imageElement.attr("src");
-
-      if (title && url && imageUrl) {
-        if (url.startsWith("/")) {
-          url = `https://news.aibase.cn${url}`;
+          articles.push({
+            id: index,
+            title: title,
+            source: "AIbase News",
+            url: url,
+            image: imageUrl,
+          });
         }
-        if (imageUrl.startsWith("/")) {
-          imageUrl = `https://news.aibase.cn${imageUrl}`;
-        }
-
-        articles.push({
-          id: index,
-          title: title,
-          source: "AIbase News",
-          url: url,
-          image: imageUrl,
-        });
-      }
+      });
+      return articles;
     });
 
     if (articles.length === 0) {
-      // If no articles found, return a snippet of the HTML for debugging
       return NextResponse.json(
         {
-          error: "No articles found. The website structure might have changed.",
-          html_snippet: html.substring(0, 500) // Return first 500 chars of HTML
+          error:
+            "No articles found. The scraper might need adjustments if the site structure has changed.",
         },
         { status: 500 }
       );
@@ -65,8 +62,12 @@ export async function GET() {
   } catch (error) {
     console.error("Scraping error:", error);
     return NextResponse.json(
-      { error: "An error occurred during scraping" },
+      { error: "An error occurred during scraping with Playwright" },
       { status: 500 }
     );
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 }
