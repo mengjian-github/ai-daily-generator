@@ -7,12 +7,15 @@ export async function GET() {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
       },
     });
 
     if (!response.ok) {
       return NextResponse.json(
-        { error: "Failed to fetch AIbase page" },
+        { error: `Failed to fetch AIbase page. Status: ${response.status}` },
         { status: 500 }
       );
     }
@@ -46,6 +49,17 @@ export async function GET() {
         });
       }
     });
+
+    if (articles.length === 0) {
+      // If no articles found, return a snippet of the HTML for debugging
+      return NextResponse.json(
+        {
+          error: "No articles found. The website structure might have changed.",
+          html_snippet: html.substring(0, 500) // Return first 500 chars of HTML
+        },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ articles });
   } catch (error) {

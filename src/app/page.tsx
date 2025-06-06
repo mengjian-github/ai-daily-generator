@@ -17,16 +17,22 @@ export default function Home() {
   );
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorSnippet, setErrorSnippet] = useState<string | null>(null);
 
   const handleFetchNews = async () => {
     setIsLoading(true);
     setError(null);
+    setErrorSnippet(null);
     try {
       const response = await fetch("/api/scrape");
-      if (!response.ok) {
-        throw new Error("Failed to fetch news");
-      }
       const data = await response.json();
+      if (!response.ok) {
+        let errorMessage = data.error || "Failed to fetch news";
+        if(data.html_snippet) {
+          setErrorSnippet(data.html_snippet);
+        }
+        throw new Error(errorMessage);
+      }
       setArticles(data.articles);
     } catch (err) {
       setError(
@@ -68,12 +74,20 @@ export default function Home() {
 
       <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
-          <div className="text-center text-red-500 bg-red-100 p-4 rounded-md">
-            Error: {error}
+          <div className="text-left text-red-500 bg-red-100 p-4 rounded-md">
+            <p className="font-bold">Error: {error}</p>
+            {errorSnippet && (
+              <div className="mt-2">
+                <p className="font-semibold">Received HTML Snippet:</p>
+                <code className="block bg-red-50 text-red-700 p-2 mt-1 rounded text-xs whitespace-pre-wrap">
+                  {errorSnippet}
+                </code>
+              </div>
+            )}
           </div>
         )}
 
-        {articles.length === 0 && !isLoading && (
+        {articles.length === 0 && !isLoading && !error && (
           <div className="text-center text-gray-500 pt-16">
             <p>点击 "获取最新动态" 来加载 AI 资讯。</p>
           </div>
