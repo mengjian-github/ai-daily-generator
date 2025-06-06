@@ -1,106 +1,141 @@
 import { NextResponse } from "next/server";
-import * as cheerio from "cheerio";
+import { chromium, Page } from "playwright";
 
-/**
- * A robust resolver for Nuxt's __NUXT_DATA__ serialization format.
- * It recursively reconstructs the original data objects from the payload array.
- * @param indexedItem - The current item to resolve. Can be a primitive, object, or array.
- * @param payload - The complete __NUXT_DATA__ array.
- * @returns The fully resolved data structure.
- */
-function resolve(indexedItem: any, payload: any[]): any {
-    if (Array.isArray(indexedItem)) {
-        // Handle Nuxt's reactive wrappers
-        const [first, second] = indexedItem;
-        if (["ShallowReactive", "Reactive", "Ref"].includes(first) && typeof second === 'number') {
-            return resolve(payload[second], payload);
+const DAILY_URL = "https://www.aibase.com/zh/daily";
+
+async function getLatestDailyArticle(page: Page) {
+    await page.goto(DAILY_URL, { waitUntil: 'networkidle' });
+
+    const latestDailyUrl = await page.evaluate((url) => {
+        const link = document.querySelector('main a[href^="/zh/daily/"]');
+        if (link) {
+            return new URL(link.getAttribute('href')!, url).href;
         }
-        // Handle arrays of indices
-        return indexedItem.map(itemIndex => resolve(payload[itemIndex], payload));
+        return null;
+    }, DAILY_URL);
+
+
+    if (!latestDailyUrl) {
+        throw new Error("Could not find the link to the latest daily report on the main page.");
     }
-    if (typeof indexedItem === 'object' && indexedItem !== null) {
-        const newObj: { [key: string]: any } = {};
-        for (const key in indexedItem) {
-            const index = indexedItem[key];
-            newObj[key] = resolve(payload[index], payload);
-        }
-        return newObj;
+
+    await page.goto(latestDailyUrl, { waitUntil: 'networkidle' });
+
+    const articleData = await page.evaluate(() => {
+        const article = document.querySelector('article');
+        if (!article) return null;
+
+        const title = article.querySelector('h1')?.textContent?.trim() || '';
+        const dateElement = article.querySelector('time, [datetime], .date'); // More robust date selector
+        const dateText = dateElement ? (dateElement.getAttribute('datetime') || dateElement.textContent?.trim()) :
+            Array.from(article.querySelectorAll('div > span')).find(span => span.textContent?.includes('202'))?.textContent?.trim() || '';
+
+
+        const description = article.querySelector('p')?.textContent?.trim() || '';
+        const source = "AIbase 日报";
+
+        const topics = Array.from(article.querySelectorAll('p > strong')).map((strong, index) => {
+            const titleElement = strong;
+            const titleText = titleElement?.textContent?.trim() || '';
+
+            // Skip if it's not a real topic entry
+            if (!/^\d+、/.test(titleText) && !titleText.includes('.')) {
+                return null;
+            }
+            const title = titleText.replace(/^\d+[、.]\s*/, '').trim();
+
+
+            let summary = '';
+            let image = '';
+            let detailUrl = '';
+
+            let currentNode: Element | null = strong.parentElement;
+
+            // Find the image if it's wrapped in a strong tag nearby
+            const nextStrongWithImage = currentNode?.nextElementSibling;
+            if (nextStrongWithImage?.tagName === 'P' && nextStrongWithImage.querySelector('strong img')) {
+                 image = (nextStrongWithImage.querySelector('img') as HTMLImageElement)?.src || '';
+            }
+
+
+            while (currentNode?.nextElementSibling) {
+                currentNode = currentNode.nextElementSibling;
+                if (currentNode.tagName === 'P' && (currentNode.querySelector('strong'))) {
+                     const nextStrongText = currentNode.querySelector('strong')?.textContent?.trim() || '';
+                     if (/^\d+[、.]\s*/.test(nextStrongText)) {
+                        break; // Stop if we've hit the next numbered topic
+                     }
+                }
+
+                if (currentNode.tagName === 'P' && !image) {
+                     const imgInP = currentNode.querySelector('img');
+                     if(imgInP) {
+                        image = imgInP.src;
+                     }
+                }
+
+
+                if (currentNode.tagName === 'BLOCKQUOTE') {
+                    const points = Array.from(currentNode.querySelectorAll('p')).map(p => p.textContent?.trim());
+                    points.shift(); // remove 【AiBase提要:】
+
+                    const linkPoint = points.find(p => p && p.startsWith('详情链接:'));
+                    if (linkPoint) {
+                        detailUrl = linkPoint.replace('详情链接:', '').trim();
+                    }
+                    summary = points.filter(p => p && !p.startsWith('详情链接:')).join('\\n');
+                } else if (currentNode.tagName === 'P') {
+                    summary += (summary ? '\\n' : '') + currentNode.textContent?.trim();
+                }
+
+            }
+
+
+            return {
+                id: index,
+                title: title,
+                summary: summary,
+                url: detailUrl, // Use the extracted detail url
+                image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+Daily'
+            };
+        }).filter(topic => topic && topic.title); // Filter out any empty or invalid topics
+
+        return {
+            title,
+            date: dateText,
+            description,
+            source,
+            url: window.location.href,
+            image: (article.querySelector('img') as HTMLImageElement)?.src || '',
+            topics,
+        };
+    });
+
+    if (!articleData) {
+        throw new Error("Failed to extract article data from the detail page. The page structure may have changed.");
     }
-    // It's a primitive value (string, number, boolean), return as is.
-    return indexedItem;
+
+    return articleData;
 }
 
 
 export async function GET() {
-  try {
-    const response = await fetch("https://news.aibase.cn/news", {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-      },
-    });
+    let browser = null;
+    try {
+        browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
 
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: "Failed to fetch AIbase page" },
-        { status: 500 }
-      );
-    }
+        const dailyReportArticle = await getLatestDailyArticle(page);
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const nuxtDataString = $("#__NUXT_DATA__").text();
+        return NextResponse.json({ articles: [dailyReportArticle] });
 
-    if (!nuxtDataString) {
-      return NextResponse.json(
-        { error: "Could not find __NUXT_DATA__ script tag." },
-        { status: 500 }
-      );
-    }
-
-    const nuxtDataPayload = JSON.parse(nuxtDataString);
-
-    const dataPointerObject = nuxtDataPayload.find((item: any) =>
-        typeof item === 'object' && item !== null && 'getAINewsList' in item
-    );
-
-    if (!dataPointerObject) {
-         return NextResponse.json(
-            { error: "Could not find the data entry point in __NUXT_DATA__." },
-            { status: 500 }
-        );
-    }
-
-    const resolvedData = resolve(dataPointerObject, nuxtDataPayload);
-    const getAINewsListResponse = resolvedData.getAINewsList;
-
-    // Final path correction
-    const newsListData = getAINewsListResponse.data;
-
-    if (!newsListData || !Array.isArray(newsListData.list)) {
-      return NextResponse.json(
-        { error: "Final resolved data is missing the 'list' array. The structure might have changed again." },
-        { status: 500 }
-      );
-    }
-
-    const articles = newsListData.list.map((item: any, index: number) => {
-        return {
-            id: item.id || index,
-            title: item.title,
-            source: item.sourcename || "AIbase News",
-            url: `https://news.aibase.cn/news/${item.id}`,
-            image: item.thumb
+    } catch (error) {
+        console.error("Playwright scraping error:", error);
+        const errorMessage = error instanceof Error ? error.message : "An error occurred during scraping";
+        return NextResponse.json({ error: errorMessage }, { status: 500 });
+    } finally {
+        if (browser) {
+            await browser.close();
         }
-    });
-
-    return NextResponse.json({ articles });
-  } catch (error) {
-    console.error("Scraping error:", error);
-    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-    return NextResponse.json(
-      { error: `An error occurred during scraping: ${errorMessage}` },
-      { status: 500 }
-    );
-  }
+    }
 }
