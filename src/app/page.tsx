@@ -146,7 +146,7 @@ export default function Home() {
         const topicsContent = selectedTopics
             .map(
                 (topic, index) =>
-                    `${index + 1}️⃣ ${topic.title}` +
+                    `${index + 1}. ${topic.title}` +
                     (topic.video ? `\n🎥 视频: ${topic.video}` : "") +
                     (topic.url ? `\n🔗 详情: ${topic.url}` : "")
             )

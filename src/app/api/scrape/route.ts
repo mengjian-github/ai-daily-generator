@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { chromium, Page } from "playwright";
+import puppeteer, { Page } from "puppeteer";
 
 const DAILY_URL = "https://www.aibase.com/zh/daily";
 
 async function getLatestDailyArticle(page: Page) {
-    await page.goto(DAILY_URL, { waitUntil: 'networkidle' });
+    await page.goto(DAILY_URL, { waitUntil: 'networkidle0' });
 
-    const latestDailyUrl = await page.evaluate((url) => {
+    const latestDailyUrl = await page.evaluate((url: string) => {
         const link = document.querySelector('main a[href^="/zh/daily/"]');
         if (link) {
             return new URL(link.getAttribute('href')!, url).href;
@@ -19,7 +19,7 @@ async function getLatestDailyArticle(page: Page) {
         throw new Error("Could not find the link to the latest daily report on the main page.");
     }
 
-    await page.goto(latestDailyUrl, { waitUntil: 'networkidle' });
+    await page.goto(latestDailyUrl, { waitUntil: 'networkidle0' });
 
     const articleData = await page.evaluate(() => {
         const article = document.querySelector('article');
@@ -121,7 +121,22 @@ async function getLatestDailyArticle(page: Page) {
 export async function GET() {
     let browser = null;
     try {
-        browser = await chromium.launch({ headless: true });
+                browser = await puppeteer.launch({
+            headless: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--window-size=1920x1080',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-extensions'
+            ]
+        });
         const page = await browser.newPage();
 
         const dailyReportArticle = await getLatestDailyArticle(page);
