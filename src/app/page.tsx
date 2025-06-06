@@ -10,11 +10,6 @@ interface Article {
   image: string;
 }
 
-interface DebugInfo {
-  screenshotUrl: string;
-  htmlContent: string;
-}
-
 export default function Home() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedArticles, setSelectedArticles] = useState<Set<number>>(
@@ -22,19 +17,14 @@ export default function Home() {
   );
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   const handleFetchNews = async () => {
     setIsLoading(true);
     setError(null);
-    setDebugInfo(null);
     try {
       const response = await fetch("/api/scrape");
       const data = await response.json();
       if (!response.ok) {
-        if (data.debugInfo) {
-          setDebugInfo(data.debugInfo);
-        }
         throw new Error(data.error || "Failed to fetch news");
       }
       setArticles(data.articles);
@@ -78,27 +68,8 @@ export default function Home() {
 
       <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
-          <div className="text-left text-red-500 bg-red-100 p-4 rounded-md mb-8">
-            <p className="font-bold">Error: {error}</p>
-            {debugInfo && (
-              <div className="mt-4">
-                <p className="font-semibold">Debugging Information:</p>
-                <a
-                  href={debugInfo.screenshotUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  View Screenshot (saved in public folder)
-                </a>
-                <p className="font-semibold mt-4">Received HTML Content:</p>
-                <textarea
-                  readOnly
-                  className="w-full h-64 bg-red-50 text-red-700 p-2 mt-1 rounded text-xs font-mono"
-                  value={debugInfo.htmlContent}
-                />
-              </div>
-            )}
+          <div className="text-center text-red-500 bg-red-100 p-4 rounded-md">
+            Error: {error}
           </div>
         )}
 
