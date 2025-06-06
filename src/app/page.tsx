@@ -432,18 +432,20 @@ export default function Home() {
                             {mainReport.topics && (
                                 <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-xl overflow-hidden">
                                     <CardHeader className="bg-gradient-to-r from-primary/5 to-purple-500/5 border-b border-border/50">
-                                        <div className="flex items-center space-x-3">
-                                            <Calendar className="h-5 w-5 text-primary" />
-                                            <div>
-                                                <CardTitle className="text-xl">{mainReport.title}</CardTitle>
-                                                {mainReport.date && (
-                                                    <p className="text-sm text-muted-foreground mt-1">{mainReport.date}</p>
-                                                )}
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center space-x-3">
+                                                <Calendar className="h-5 w-5 text-primary" />
+                                                <div>
+                                                    <CardTitle className="text-xl">{mainReport.title}</CardTitle>
+                                                    {mainReport.date && (
+                                                        <p className="text-sm text-muted-foreground mt-1">{mainReport.date}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="text-sm text-muted-foreground">
+                                                共 {mainReport.topics?.length || 0} 条资讯
                                             </div>
                                         </div>
-                                        {mainReport.description && (
-                                            <p className="text-muted-foreground leading-relaxed mt-4">{mainReport.description}</p>
-                                        )}
                                     </CardHeader>
                                     <CardContent className="p-0">
                                         <Accordion type="multiple" className="w-full">
