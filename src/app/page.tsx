@@ -31,6 +31,7 @@ interface Topic {
     summary: string;
     url: string;
     image: string;
+    video?: string;
 }
 
 // Defines the structure of the daily report article
@@ -171,6 +172,26 @@ export default function Home() {
                         )}
                     </CardContent>
                 </Card>
+                <h2 className="text-xl font-semibold mt-8">待发布视频</h2>
+                <Card>
+                    <CardContent className="flex flex-wrap gap-4 pt-6">
+                        {selectedTopics.map(
+                            (topic) =>
+                                topic.video && (
+                                    <div
+                                        key={`video-social-${topic.id}`}
+                                        className="relative w-40 h-40"
+                                    >
+                                        <video
+                                            src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
+                                            controls
+                                            className="rounded-lg w-full h-full object-cover"
+                                        />
+                                    </div>
+                                )
+                        )}
+                    </CardContent>
+                </Card>
             </div>
         );
     };
@@ -267,57 +288,48 @@ export default function Home() {
                                                     }
                                                     className="ml-4"
                                                 />
-                                                <AccordionTrigger className="flex-1">
-                                                    <label
-                                                        htmlFor={`topic-${topic.id}`}
-                                                        className="flex-1 text-sm font-medium text-left leading-none cursor-pointer"
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    >
-                                                        {topic.title}
-                                                    </label>
+                                                <AccordionTrigger className="flex-1 text-left">
+                                                    <span className="font-semibold">{topic.title}</span>
                                                 </AccordionTrigger>
                                             </div>
-                                            <AccordionContent className="pl-8 pr-4 pb-4 space-y-4">
-                                                {topic.image &&
-                                                    !topic.image.includes(
-                                                        "placehold.co"
-                                                    ) && (
-                                                        <div className="relative w-full h-48 rounded-lg overflow-hidden mt-2">
-                                                            <Image
-                                                                src={
-                                                                    topic.image.startsWith(
-                                                                        "http"
-                                                                    )
-                                                                        ? `/api/image-proxy?url=${encodeURIComponent(
-                                                                              topic.image
-                                                                          )}`
-                                                                        : topic.image
-                                                                }
-                                                                alt={
-                                                                    topic.title
-                                                                }
-                                                                layout="fill"
-                                                                objectFit="cover"
-                                                            />
-                                                        </div>
-                                                    )}
-                                                <p className="text-sm text-gray-600 whitespace-pre-line">
-                                                    {topic.summary}
-                                                </p>
+                                            <AccordionContent className="pt-4 text-gray-700 space-y-4">
+                                                <div
+                                                    className="prose prose-sm max-w-none"
+                                                    dangerouslySetInnerHTML={{
+                                                        __html: topic.summary.replace(/\\n/g, "<br />"),
+                                                    }}
+                                                />
+
+                                                {topic.image && !topic.image.includes("placehold.co") && (
+                                                    <div className="mt-4">
+                                                        <Image
+                                                            src={`/api/image-proxy?url=${encodeURIComponent(topic.image)}`}
+                                                            alt={topic.title}
+                                                            width={600}
+                                                            height={400}
+                                                            className="rounded-lg mx-auto"
+                                                        />
+                                                    </div>
+                                                )}
+                                                {topic.video && (
+                                                    <div className="mt-4">
+                                                        <video
+                                                            src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
+                                                            controls
+                                                            className="rounded-lg mx-auto w-full"
+                                                        />
+                                                    </div>
+                                                )}
+
                                                 {topic.url && (
                                                     <a
                                                         href={topic.url}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        onClick={(e) =>
-                                                            e.stopPropagation()
-                                                        }
-                                                        className="flex items-center text-blue-500 hover:text-blue-700"
+                                                        className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-800"
                                                     >
-                                                        <Link2 className="h-4 w-4 mr-1" />
-                                                        <span className="text-xs">
-                                                            查看来源
-                                                        </span>
+                                                        <Link2 className="mr-2 h-4 w-4" />
+                                                        查看详情
                                                     </a>
                                                 )}
                                             </AccordionContent>
@@ -355,7 +367,9 @@ export default function Home() {
                                         </CardContent>
                                     </Card>
                                     {selectedTopics.map((topic, index) => {
-                                        const topicText = `${index + 1}、${topic.title}` + (topic.url ? `\n详情: ${topic.url}` : "");
+                                        const topicText = `${index + 1}、${topic.title}` +
+                                            (topic.video ? `\n视频: ${topic.video}` : "") +
+                                            (topic.url ? `\n详情: ${topic.url}` : "");
                                         return (
                                             <Card key={topic.id}>
                                                 <CardHeader>
@@ -374,6 +388,14 @@ export default function Home() {
                                                             <h3 className="text-xs font-semibold mb-2 text-gray-500">发送图片:</h3>
                                                             <div className="relative w-full h-56">
                                                                 <Image src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image} alt={topic.title} layout="fill" objectFit="contain" className="rounded-lg" />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {topic.video && (
+                                                        <div>
+                                                            <h3 className="text-xs font-semibold mb-2 text-gray-500">发送视频:</h3>
+                                                            <div className="relative w-full">
+                                                                <video src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`} controls className="rounded-lg w-full" />
                                                             </div>
                                                         </div>
                                                     )}

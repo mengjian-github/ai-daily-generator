@@ -47,16 +47,10 @@ async function getLatestDailyArticle(page: Page) {
 
             let summary = '';
             let image = '';
+            let video = '';
             let detailUrl = '';
 
             let currentNode: Element | null = strong.parentElement;
-
-            // Find the image if it's wrapped in a strong tag nearby
-            const nextStrongWithImage = currentNode?.nextElementSibling;
-            if (nextStrongWithImage?.tagName === 'P' && nextStrongWithImage.querySelector('strong img')) {
-                 image = (nextStrongWithImage.querySelector('img') as HTMLImageElement)?.src || '';
-            }
-
 
             while (currentNode?.nextElementSibling) {
                 currentNode = currentNode.nextElementSibling;
@@ -67,10 +61,14 @@ async function getLatestDailyArticle(page: Page) {
                      }
                 }
 
-                if (currentNode.tagName === 'P' && !image) {
+                if (currentNode.tagName === 'P') {
                      const imgInP = currentNode.querySelector('img');
-                     if(imgInP) {
+                     if(imgInP && !image) {
                         image = imgInP.src;
+                     }
+                     const videoInP = currentNode.querySelector('video');
+                     if(videoInP && !video) {
+                        video = videoInP.src || videoInP.querySelector('source')?.src || '';
                      }
                 }
 
@@ -96,7 +94,8 @@ async function getLatestDailyArticle(page: Page) {
                 title: title,
                 summary: summary,
                 url: detailUrl, // Use the extracted detail url
-                image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+Daily'
+                image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+Daily',
+                video: video
             };
         }).filter(topic => topic && topic.title); // Filter out any empty or invalid topics
 
