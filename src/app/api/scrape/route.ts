@@ -166,7 +166,7 @@ async function getLatestDailyArticle(): Promise<Article> {
                     }
                 }
 
-                // 提取摘要内容
+                // 提取摘要内容（限制长度，保持简洁）
                 if ($current.is('blockquote')) {
                     const points: string[] = [];
                     $current.find('p').each((_, p) => {
@@ -174,16 +174,19 @@ async function getLatestDailyArticle(): Promise<Article> {
                         if (text && !text.startsWith('【AiBase提要')) {
                             if (text.startsWith('详情链接:')) {
                                 detailUrl = text.replace('详情链接:', '').trim();
-                            } else {
+                            } else if (points.length < 2) { // 只取前2个要点
                                 points.push(text);
                             }
                         }
                     });
                     summary = points.join('\n');
-                } else if ($current.is('p')) {
+                } else if ($current.is('p') && summary.length < 200) { // 限制summary长度
                     const text = $current.text().trim();
-                    if (text) {
-                        summary += (summary ? '\n' : '') + text;
+                    if (text && !text.includes('详情链接') && !text.includes('http')) {
+                        const newSummary = summary + (summary ? '\n' : '') + text;
+                        if (newSummary.length <= 200) {
+                            summary = newSummary;
+                        }
                     }
                 }
             }

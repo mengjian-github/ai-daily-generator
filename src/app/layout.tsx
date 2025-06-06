@@ -91,7 +91,7 @@ export default function RootLayout({
 
           {/* 主要内容 */}
           <main className="relative z-10">
-            {children}
+        {children}
           </main>
 
           {/* 页脚 */}
