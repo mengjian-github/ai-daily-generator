@@ -1,11 +1,14 @@
+
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
+import FeatureStats from "@/components/FeatureStats";
+import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
     Accordion,
@@ -23,6 +26,18 @@ import {
     Image as ImageIcon,
     Link2,
     Sparkles,
+    Wand2,
+    Calendar,
+    ExternalLink,
+
+    Clock,
+    TrendingUp,
+    Palette,
+    Play,
+    Brain,
+    Globe,
+    Zap,
+    RefreshCw,
 } from "lucide-react";
 import Image from 'next/image';
 
@@ -62,10 +77,8 @@ export default function Home() {
     const [activeTab, setActiveTab] = useState("wechat");
     const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
 
-    const openingText =
-        "#AI日课\n大家好，我来分享今日值得关注的 AI 动态";
-    const closingText =
-        "以上是最新 AI 精选资讯，大家 Get 了可以拍拍我哈～";
+    const openingText = "#AI日课 ✨\n\n大家好，我来分享今日值得关注的 AI 动态 🚀";
+    const closingText = "以上是最新 AI 精选资讯，大家 Get 了可以拍拍我哈～ 👏";
 
     const fetchNews = async () => {
         setLoading(true);
@@ -77,7 +90,6 @@ export default function Home() {
             const data = await res.json();
 
             if (!res.ok) {
-                // This will now catch our detailed diagnostic error
                 setError(data);
             } else {
                 setArticles(data.articles);
@@ -86,7 +98,7 @@ export default function Home() {
                 }
             }
         } catch (err) {
-            setError({ error: err instanceof Error ? err.message : "An unknown error occurred." });
+            setError({ error: err instanceof Error ? err.message : "获取数据时发生未知错误" });
         } finally {
             setLoading(false);
         }
@@ -111,11 +123,17 @@ export default function Home() {
     const CopyButton = ({ content, id }: { content: string, id: string }) => (
         <Button
             variant="ghost"
-            size="icon"
+            size="sm"
             onClick={() => copyToClipboard(content, id)}
-            className="transition-all"
+            className="transition-all duration-200 hover:bg-primary/10 hover:scale-105 group"
         >
-            {copiedStates[id] ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+            {copiedStates[id] ?
+                <Check className="h-4 w-4 text-green-500" /> :
+                <Copy className="h-4 w-4 group-hover:text-primary transition-colors" />
+            }
+            <span className="ml-2 text-xs">
+                {copiedStates[id] ? "已复制" : "复制"}
+            </span>
         </Button>
     );
 
@@ -123,27 +141,34 @@ export default function Home() {
         const dailyReport = articles[0];
         if (!dailyReport) return "";
 
-        const header = `【AI Daily】${dailyReport.title}\n${dailyReport.date}\n\n`;
+        const header = `🤖 【AI Daily】${dailyReport.title}\n📅 ${dailyReport.date}\n\n`;
 
         const topicsContent = selectedTopics
             .map(
                 (topic, index) =>
-                    `${index + 1}、${topic.title}` +
-                    (topic.url ? `\n详情: ${topic.url}` : "")
+                    `${index + 1}️⃣ ${topic.title}` +
+                    (topic.video ? `\n🎥 视频: ${topic.video}` : "") +
+                    (topic.url ? `\n🔗 详情: ${topic.url}` : "")
             )
             .join("\n\n");
-        return header + topicsContent;
+        const footer = `\n\n以上是今日 AI 精选资讯，觉得有用的朋友请点个赞支持一下～ 🙏✨`;
+        return header + topicsContent + footer;
     };
 
     const renderSocialContent = () => {
         const content = generateSocialContent();
         return (
             <div className="space-y-6">
-                <Card className="bg-card/50 backdrop-blur-sm">
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
-                        <CardTitle className="text-sm font-medium">
-                            朋友圈/知识星球格式
-                        </CardTitle>
+                <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
+                    <CardHeader className="flex flex-row items-center justify-between pb-4">
+                        <div className="flex items-center space-x-2">
+                            <div className="p-2 bg-primary/20 rounded-lg">
+                                <Share2 className="h-4 w-4 text-primary" />
+                            </div>
+                            <CardTitle className="text-lg font-semibold">
+                                朋友圈/知识星球格式
+                            </CardTitle>
+                        </div>
                         <CopyButton content={content} id="social-main" />
                     </CardHeader>
                     <CardContent>
@@ -151,80 +176,175 @@ export default function Home() {
                             value={content}
                             readOnly
                             rows={selectedTopics.length > 0 ? selectedTopics.length + 10 : 5}
-                            className="w-full p-3 text-sm bg-background/70 border-border rounded-md"
+                            className="w-full p-4 text-sm bg-background/80 border-border/50 rounded-lg font-mono resize-none focus:ring-2 focus:ring-primary/20"
                         />
                     </CardContent>
                 </Card>
-                <h2 className="text-xl font-semibold tracking-tight mt-8">待发布媒体</h2>
-                <Card className="bg-card/50 backdrop-blur-sm">
-                    <CardContent className="flex flex-wrap gap-4 p-4">
-                        {selectedTopics.map((topic) =>
-                            topic.image && !topic.image.includes("placehold.co") && (
-                                <div key={`img-social-${topic.id}`} className="relative w-40 h-40 group">
-                                    <Image src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image} alt={topic.title} layout="fill" objectFit="cover" className="rounded-lg transition-transform duration-300 group-hover:scale-105" />
+
+                <div className="space-y-4">
+                    <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg">
+                            <ImageIcon className="h-5 w-5 text-purple-600" />
+                        </div>
+                        <h3 className="text-xl font-semibold tracking-tight">配图素材</h3>
+                        <div className="flex-1 h-px bg-gradient-to-r from-border to-transparent"></div>
+                    </div>
+
+                    <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
+                        <CardContent className="p-6">
+                            {selectedTopics.filter(topic =>
+                                (topic.image && !topic.image.includes("placehold.co")) || topic.video
+                            ).length > 0 ? (
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                    {selectedTopics.map((topic) => (
+                                        <>
+                                            {topic.image && !topic.image.includes("placehold.co") && (
+                                                <div key={`img-social-${topic.id}`} className="group relative aspect-square">
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                    <Image
+                                                        src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image}
+                                                        alt={topic.title}
+                                                        fill
+                                                        className="object-cover rounded-xl shadow-md transition-transform duration-300 group-hover:scale-105"
+                                                    />
+                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                        <p className="text-white text-xs font-medium truncate">{topic.title}</p>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {topic.video && (
+                                                <div key={`video-social-${topic.id}`} className="group relative aspect-square">
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                    <video
+                                                        src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
+                                                        className="w-full h-full object-cover rounded-xl shadow-md transition-transform duration-300 group-hover:scale-105"
+                                                    />
+                                                    <div className="absolute inset-0 flex items-center justify-center z-10">
+                                                        <div className="p-3 bg-white/20 backdrop-blur-sm rounded-full">
+                                                            <Play className="h-6 w-6 text-white" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                        <p className="text-white text-xs font-medium truncate">{topic.title}</p>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
+                                    ))}
                                 </div>
-                            )
-                        )}
-                        {selectedTopics.map((topic) =>
-                            topic.video && (
-                                <div key={`video-social-${topic.id}`} className="relative w-40 h-40 group">
-                                    <video src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`} controls className="rounded-lg w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                            ) : (
+                                <div className="text-center py-12 text-muted-foreground">
+                                    <ImageIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                                    <p>暂无配图素材</p>
                                 </div>
-                            )
-                        )}
-                    </CardContent>
-                </Card>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         );
     };
 
     const mainReport = articles.length > 0 ? articles[0] : null;
 
-    const allTopicIds = useMemo(() => {
-        if (mainReport && mainReport.topics) {
-            return mainReport.topics.map((topic) => `item-${topic.id}`);
-        }
-        return [];
-    }, [mainReport]);
+
 
     return (
-        <div className="min-h-screen bg-background text-foreground relative overflow-hidden">
-            <div className="absolute inset-0 -z-10 h-full w-full bg-background bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:14px_24px]"><div className="absolute left-0 right-0 top-0 -z-10 m-auto h-[310px] w-[310px] rounded-full bg-primary/10 blur-2xl"></div></div>
-            <main className="container mx-auto p-4 md:p-8">
-                <header className="flex flex-col md:flex-row justify-between items-center mb-12">
-                    <div className="flex items-center space-x-4 mb-4 md:mb-0">
-                        <div className="p-3 bg-primary/20 rounded-lg">
-                            <Newspaper className="h-8 w-8 text-primary" />
+        <div className="min-h-screen text-foreground relative">
+            <div className="container mx-auto p-4 md:p-8 lg:p-12">
+                                 {/* 头部区域 */}
+                 <header className="flex flex-col lg:flex-row justify-between items-center mb-16 space-y-8 lg:space-y-0">
+                     {/* 主题切换按钮 - 固定在右上角 */}
+                     <div className="fixed top-6 right-6 z-50 lg:hidden">
+                         <ThemeToggle />
+                     </div>
+                    <div className="flex items-center space-x-6">
+                        <div className="relative">
+                            <div className="absolute inset-0 bg-gradient-to-r from-primary to-purple-600 rounded-2xl blur-lg opacity-75 animate-pulse"></div>
+                            <div className="relative p-4 bg-gradient-to-r from-primary to-purple-600 rounded-2xl shadow-2xl">
+                                <Brain className="h-10 w-10 text-white" />
+                            </div>
                         </div>
-                        <div>
-                            <h1 className="text-4xl font-bold tracking-tight">AI Daily Generator</h1>
-                            <p className="text-muted-foreground">一键生成你的专属 AI 日报</p>
+                        <div className="space-y-2">
+                            <h1 className="text-5xl font-bold tracking-tight bg-gradient-to-r from-primary via-purple-600 to-blue-600 bg-clip-text text-transparent">
+                                AI Daily Generator
+                            </h1>
+                            <p className="text-lg text-muted-foreground">
+                                一键生成你的专属 AI 日报 ✨ 智能化内容创作助手
+                            </p>
+                            <div className="flex items-center space-x-4 text-sm text-muted-foreground">
+                                <div className="flex items-center space-x-1">
+                                    <Globe className="h-4 w-4" />
+                                    <span>AIbase 数据源</span>
+                                </div>
+                                <div className="flex items-center space-x-1">
+                                    <Zap className="h-4 w-4" />
+                                    <span>实时更新</span>
+                                </div>
+                                <div className="flex items-center space-x-1">
+                                    <Wand2 className="h-4 w-4" />
+                                    <span>智能格式化</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <Button onClick={fetchNews} disabled={loading} size="lg" className="group">
-                        {loading ? (
-                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在获取...</>
-                        ) : (
-                            <><Sparkles className="mr-2 h-4 w-4 transition-transform duration-500 group-hover:scale-125 group-hover:rotate-12" />获取最新日报</>
+
+                                         <div className="flex flex-col sm:flex-row gap-4 items-center">
+                         {/* 桌面端主题切换 */}
+                         <div className="hidden lg:block">
+                             <ThemeToggle />
+                         </div>
+
+                         <Button
+                             onClick={fetchNews}
+                             disabled={loading}
+                             size="lg"
+                             className="group relative overflow-hidden bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white shadow-xl hover:shadow-2xl transition-all duration-300 px-8 py-6 text-lg"
+                         >
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/25 to-white/0 transform -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
+                            {loading ? (
+                                <>
+                                    <Loader2 className="mr-3 h-5 w-5 animate-spin" />
+                                    正在获取最新资讯...
+                                </>
+                            ) : (
+                                <>
+                                    <RefreshCw className="mr-3 h-5 w-5 transition-transform duration-500 group-hover:rotate-180" />
+                                    获取最新日报
+                                </>
+                            )}
+                        </Button>
+
+                        {mainReport && (
+                            <Button
+                                variant="outline"
+                                size="lg"
+                                className="group border-border/50 hover:bg-primary/5 hover:border-primary/50 transition-all duration-300 px-6 py-6"
+                                onClick={() => window.open(mainReport.url, '_blank')}
+                            >
+                                <ExternalLink className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                                查看原文
+                            </Button>
                         )}
-                    </Button>
+                    </div>
                 </header>
 
+                {/* 错误提示 */}
                 {error && (
-                     <Card className="mb-8 border-destructive bg-destructive/10">
+                    <Card className="mb-12 border-destructive/50 bg-gradient-to-r from-destructive/5 to-red-500/5 shadow-lg">
                         <CardHeader>
-                            <AlertTitle className="flex items-center text-destructive-foreground">
-                                <Terminal className="h-5 w-5 mr-2" />
-                                出错了！
+                            <AlertTitle className="flex items-center text-destructive">
+                                <Terminal className="h-6 w-6 mr-3" />
+                                获取数据时出错了
                             </AlertTitle>
                         </CardHeader>
-                        <CardContent className="space-y-4">
-                             <AlertDescription className="text-destructive-foreground/80">
-                               {error.error}
+                        <CardContent className="space-y-6">
+                            <AlertDescription className="text-destructive/80 text-base">
+                                {error.error}
                             </AlertDescription>
 
                             {error.screenshotUrl && (
-                                <Button asChild variant="secondary">
+                                <Button variant="secondary" asChild className="hover:bg-secondary/80 transition-colors">
                                     <a href={error.screenshotUrl} target="_blank" rel="noopener noreferrer">
                                         <ImageIcon className="h-5 w-5 mr-2"/>
                                         查看页面截图
@@ -233,75 +353,163 @@ export default function Home() {
                             )}
 
                             {error.html && (
-                                <div>
-                                    <h3 className="font-semibold mb-2">浏览器获取到的 HTML 源码:</h3>
-                                    <Textarea value={error.html} readOnly rows={20} className="w-full p-2 font-mono text-xs bg-background/50 border-border rounded-md"/>
+                                <div className="space-y-3">
+                                    <h3 className="font-semibold text-lg">浏览器获取到的 HTML 源码:</h3>
+                                    <Textarea
+                                        value={error.html}
+                                        readOnly
+                                        rows={20}
+                                        className="w-full p-4 font-mono text-xs bg-background/50 border-border/50 rounded-lg"
+                                    />
                                 </div>
                             )}
                         </CardContent>
                     </Card>
                 )}
 
+                {/* 加载状态 */}
                 {loading && (
-                    <div className="flex items-center justify-center py-24">
-                        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-                    </div>
-                )}
-
-                {!mainReport && !loading && (
-                    <div className="text-center py-24 px-6 rounded-lg bg-card/50 backdrop-blur-sm border border-border">
-                        <div className="inline-block p-4 bg-primary/20 rounded-full mb-4">
-                            <Newspaper className="h-10 w-10 text-primary" />
+                    <div className="flex flex-col items-center justify-center py-32 space-y-6">
+                        <div className="relative">
+                            <div className="absolute inset-0 bg-gradient-to-r from-primary to-purple-600 rounded-full blur-xl opacity-75 animate-pulse"></div>
+                            <Loader2 className="relative h-16 w-16 animate-spin text-primary" />
                         </div>
-                        <h2 className="text-2xl font-bold tracking-tight">准备好生成您的 AI 日报了吗？</h2>
-                        <p className="text-muted-foreground mt-2 max-w-md mx-auto">
-                            点击右上角的"获取最新日报"按钮，系统将自动从 AIbase 获取最新资讯，并为您整理好。
-                        </p>
+                        <div className="text-center space-y-2">
+                            <h3 className="text-xl font-semibold">正在获取最新 AI 资讯</h3>
+                            <p className="text-muted-foreground">请稍候，我们正在为您整理今日精彩内容...</p>
+                        </div>
                     </div>
                 )}
 
-                {mainReport && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* 空状态 */}
+                {!mainReport && !loading && (
+                    <div className="text-center py-32 px-6 rounded-2xl bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border border-border/50 shadow-xl">
                         <div className="space-y-6">
-                            <h2 className="text-2xl font-semibold tracking-tight">1. 选择分享内容</h2>
+                            <div className="relative mx-auto w-24 h-24">
+                                <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-purple-500/20 rounded-full animate-pulse"></div>
+                                <div className="relative flex items-center justify-center w-full h-full bg-primary/10 rounded-full">
+                                    <Newspaper className="h-12 w-12 text-primary" />
+                                </div>
+                            </div>
+                            <div className="space-y-3">
+                                <h2 className="text-3xl font-bold tracking-tight">准备好开始了吗？</h2>
+                                <p className="text-muted-foreground text-lg max-w-2xl mx-auto leading-relaxed">
+                                    点击&ldquo;获取最新日报&rdquo;按钮，系统将自动从 AIbase 获取最新 AI 资讯，
+                                    并为您智能整理成适合各种平台分享的格式。
+                                </p>
+                            </div>
+                            <div className="flex items-center justify-center space-x-8 pt-6">
+                                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                                    <Clock className="h-4 w-4" />
+                                    <span>实时更新</span>
+                                </div>
+                                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                                    <TrendingUp className="h-4 w-4" />
+                                    <span>热点追踪</span>
+                                </div>
+                                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                                    <Palette className="h-4 w-4" />
+                                    <span>多格式输出</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 主要内容区域 */}
+                {mainReport && (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
+                        {/* 左侧：内容选择 */}
+                        <div className="space-y-8">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-gradient-to-r from-blue-500/20 to-primary/20 rounded-lg">
+                                    <Sparkles className="h-5 w-5 text-blue-600" />
+                                </div>
+                                <h2 className="text-2xl font-semibold tracking-tight">选择分享内容</h2>
+                                <div className="flex-1 h-px bg-gradient-to-r from-border to-transparent"></div>
+                            </div>
+
                             {mainReport.topics && (
-                                <Card className="bg-card/50 backdrop-blur-sm">
-                                    <CardHeader>
-                                        <CardTitle className="text-xl">{mainReport.title}</CardTitle>
-                                        {mainReport.date && <p className="text-sm text-muted-foreground pt-2">{mainReport.date}</p>}
-                                        <p className="text-sm text-muted-foreground pt-2">{mainReport.description}</p>
+                                <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-xl overflow-hidden">
+                                    <CardHeader className="bg-gradient-to-r from-primary/5 to-purple-500/5 border-b border-border/50">
+                                        <div className="flex items-center space-x-3">
+                                            <Calendar className="h-5 w-5 text-primary" />
+                                            <div>
+                                                <CardTitle className="text-xl">{mainReport.title}</CardTitle>
+                                                {mainReport.date && (
+                                                    <p className="text-sm text-muted-foreground mt-1">{mainReport.date}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {mainReport.description && (
+                                            <p className="text-muted-foreground leading-relaxed mt-4">{mainReport.description}</p>
+                                        )}
                                     </CardHeader>
-                                    <CardContent>
+                                    <CardContent className="p-0">
                                         <Accordion type="multiple" className="w-full">
-                                            {mainReport.topics.map((topic) => (
-                                                <AccordionItem value={`item-${topic.id}`} key={topic.id} className="border-border/50">
-                                                    <div className="flex items-center space-x-4 w-full pr-4">
+                                            {mainReport.topics.map((topic, index) => (
+                                                <AccordionItem
+                                                    value={`item-${topic.id}`}
+                                                    key={topic.id}
+                                                    className="border-border/30 hover:bg-primary/5 transition-colors"
+                                                >
+                                                    <div className="flex items-center space-x-4 w-full pr-6">
                                                         <Checkbox
                                                             id={`topic-${topic.id}`}
                                                             checked={selectedTopics.some((t) => t.id === topic.id)}
                                                             onCheckedChange={() => handleTopicSelection(topic)}
-                                                            className="ml-4"
+                                                            className="ml-6 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                                                         />
-                                                        <AccordionTrigger className="flex-1 text-left font-semibold text-base py-4">{topic.title}</AccordionTrigger>
+                                                        <AccordionTrigger className="flex-1 text-left font-semibold text-base py-6 hover:no-underline">
+                                                            <div className="flex items-center space-x-3">
+                                                                <span className="inline-flex items-center justify-center w-6 h-6 bg-primary/10 text-primary text-xs font-bold rounded-full">
+                                                                    {index + 1}
+                                                                </span>
+                                                                <span>{topic.title}</span>
+                                                            </div>
+                                                        </AccordionTrigger>
                                                     </div>
-                                                    <AccordionContent className="pb-4 pl-16 pr-4 text-muted-foreground space-y-4">
-                                                        <div className="prose prose-sm max-w-none prose-invert" dangerouslySetInnerHTML={{ __html: topic.summary.replace(/\\n/g, "<br />") }} />
+                                                    <AccordionContent className="pb-6 pl-16 pr-6 space-y-6">
+                                                        <div
+                                                            className="prose prose-sm max-w-none text-muted-foreground leading-relaxed"
+                                                            dangerouslySetInnerHTML={{ __html: topic.summary.replace(/\\n/g, "<br />") }}
+                                                        />
 
                                                         {topic.image && !topic.image.includes("placehold.co") && (
-                                                            <div className="mt-4 rounded-lg overflow-hidden border border-border">
-                                                                <Image src={`/api/image-proxy?url=${encodeURIComponent(topic.image)}`} alt={topic.title} width={600} height={400} className="w-full h-auto" />
+                                                            <div className="relative rounded-xl overflow-hidden border border-border/50 shadow-lg group">
+                                                                <Image
+                                                                    src={`/api/image-proxy?url=${encodeURIComponent(topic.image)}`}
+                                                                    alt={topic.title}
+                                                                    width={600}
+                                                                    height={400}
+                                                                    className="w-full h-auto transition-transform duration-300 group-hover:scale-105"
+                                                                />
                                                             </div>
                                                         )}
+
                                                         {topic.video && (
-                                                            <div className="mt-4 rounded-lg overflow-hidden border border-border">
-                                                                <video src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`} controls className="w-full" />
+                                                            <div className="relative rounded-xl overflow-hidden border border-border/50 shadow-lg">
+                                                                <video
+                                                                    src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
+                                                                    controls
+                                                                    className="w-full"
+                                                                />
                                                             </div>
                                                         )}
 
                                                         {topic.url && (
-                                                            <Button variant="link" asChild className="p-0 h-auto">
-                                                                <a href={topic.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-sm font-medium text-primary/80 hover:text-primary">
-                                                                    <Link2 className="mr-2 h-4 w-4" />
+                                                            <Button
+                                                                variant="link"
+                                                                asChild
+                                                                className="p-0 h-auto text-primary hover:text-primary/80"
+                                                            >
+                                                                <a
+                                                                    href={topic.url}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="inline-flex items-center text-sm font-medium group"
+                                                                >
+                                                                    <Link2 className="mr-2 h-4 w-4 group-hover:scale-110 transition-transform" />
                                                                     查看详情
                                                                 </a>
                                                             </Button>
@@ -314,75 +522,173 @@ export default function Home() {
                                 </Card>
                             )}
                         </div>
+
+                        {/* 右侧：格式化输出 */}
                         {selectedTopics.length > 0 && (
-                            <div className="space-y-6">
-                                <h2 className="text-2xl font-semibold tracking-tight">2. 复制格式化内容</h2>
-                                <Tabs value={activeTab} onValueChange={setActiveTab}>
-                                    <TabsList className="grid w-full grid-cols-2">
-                                        <TabsTrigger value="wechat">微信群格式</TabsTrigger>
-                                        <TabsTrigger value="social">朋友圈/知识星球</TabsTrigger>
+                            <div className="space-y-8">
+                                <div className="flex items-center space-x-3">
+                                    <div className="p-2 bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-lg">
+                                        <Share2 className="h-5 w-5 text-green-600" />
+                                    </div>
+                                    <h2 className="text-2xl font-semibold tracking-tight">复制格式化内容</h2>
+                                    <div className="flex-1 h-px bg-gradient-to-r from-border to-transparent"></div>
+                                </div>
+
+                                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                                    <TabsList className="grid w-full grid-cols-2 bg-card/50 backdrop-blur-sm border border-border/50 shadow-lg">
+                                        <TabsTrigger
+                                            value="wechat"
+                                            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
+                                        >
+                                            微信群格式
+                                        </TabsTrigger>
+                                        <TabsTrigger
+                                            value="social"
+                                            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
+                                        >
+                                            朋友圈/知识星球
+                                        </TabsTrigger>
                                     </TabsList>
-                                    <TabsContent value="wechat" className="mt-4">
-                                        <div className="space-y-4">
-                                            <Card className="bg-card/50 backdrop-blur-sm">
-                                                <CardHeader className="flex flex-row items-center justify-between">
-                                                    <CardTitle className="text-base font-medium">1. 开场白</CardTitle>
-                                                    <CopyButton content={openingText} id="wechat-opening" />
-                                                </CardHeader>
-                                                <CardContent>
-                                                    <Textarea value={openingText} readOnly rows={3} className="bg-background/70" />
-                                                </CardContent>
-                                            </Card>
-                                            {selectedTopics.map((topic, index) => {
-                                                const topicText = `${index + 1}、${topic.title}` + (topic.video ? `\n视频: ${topic.video}` : "") + (topic.url ? `\n详情: ${topic.url}` : "");
-                                                return (
-                                                    <Card key={topic.id} className="bg-card/50 backdrop-blur-sm">
-                                                        <CardHeader className="flex flex-row items-center justify-between">
-                                                            <CardTitle className="text-base font-medium">{`${index + 2}. 第 ${index + 1} 条资讯`}</CardTitle>
-                                                            <CopyButton content={topicText} id={`wechat-topic-${topic.id}`} />
-                                                        </CardHeader>
-                                                        <CardContent className="space-y-4">
-                                                            <Textarea value={topicText} readOnly rows={3} className="bg-background/70" />
-                                                            {topic.image && !topic.image.includes("placehold.co") && (
-                                                                <div>
-                                                                    <h3 className="text-sm font-semibold my-2 text-muted-foreground">发送图片:</h3>
-                                                                    <div className="relative w-full h-56 rounded-lg overflow-hidden border border-border">
-                                                                        <Image src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image} alt={topic.title} layout="fill" objectFit="contain" />
-                                                                    </div>
+
+                                                                         <TabsContent value="wechat" className="mt-6 space-y-6">
+                                         {/* 使用提示 */}
+                                         {selectedTopics.some(topic => topic.video) && (
+                                             <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50 rounded-lg p-4">
+                                                 <div className="flex items-start space-x-3">
+                                                     <div className="p-1 bg-blue-500/20 rounded-full mt-0.5">
+                                                         <Play className="h-4 w-4 text-blue-600" />
+                                                     </div>
+                                                     <div className="flex-1">
+                                                         <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-1">
+                                                             💡 视频发送提示
+                                                         </h4>
+                                                         <p className="text-xs text-blue-700 dark:text-blue-300">
+                                                             视频文件需要单独发送，不会包含在文字消息中。请先发送文字内容，然后单独发送对应的视频文件。
+                                                         </p>
+                                                     </div>
+                                                 </div>
+                                             </div>
+                                         )}
+
+                                         {/* 开场白 */}
+                                         <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
+                                            <CardHeader className="flex flex-row items-center justify-between">
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="p-2 bg-blue-500/20 rounded-lg">
+                                                        <Wand2 className="h-4 w-4 text-blue-600" />
+                                                    </div>
+                                                    <CardTitle className="text-base font-medium">开场白</CardTitle>
+                                                </div>
+                                                <CopyButton content={openingText} id="wechat-opening" />
+                                            </CardHeader>
+                                            <CardContent>
+                                                <Textarea
+                                                    value={openingText}
+                                                    readOnly
+                                                    rows={3}
+                                                    className="bg-background/80 border-border/50 font-mono text-sm resize-none"
+                                                />
+                                            </CardContent>
+                                        </Card>
+
+                                                                                 {/* 资讯内容 */}
+                                         {selectedTopics.map((topic, index) => {
+                                             const topicText = `${index + 1}、${topic.title}` +
+                                                 (topic.url ? `\n🔗 详情: ${topic.url}` : "");
+                                            return (
+                                                <Card key={topic.id} className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
+                                                    <CardHeader className="flex flex-row items-center justify-between">
+                                                        <div className="flex items-center space-x-2">
+                                                            <div className="p-2 bg-primary/20 rounded-lg">
+                                                                <span className="text-xs font-bold text-primary">{index + 1}</span>
+                                                            </div>
+                                                            <CardTitle className="text-base font-medium">第 {index + 1} 条资讯</CardTitle>
+                                                        </div>
+                                                        <CopyButton content={topicText} id={`wechat-topic-${topic.id}`} />
+                                                    </CardHeader>
+                                                    <CardContent className="space-y-4">
+                                                        <Textarea
+                                                            value={topicText}
+                                                            readOnly
+                                                            rows={3}
+                                                            className="bg-background/80 border-border/50 font-mono text-sm resize-none"
+                                                        />
+
+                                                        {topic.image && !topic.image.includes("placehold.co") && (
+                                                            <div className="space-y-2">
+                                                                <h4 className="text-sm font-semibold text-muted-foreground flex items-center">
+                                                                    <ImageIcon className="h-4 w-4 mr-2" />
+                                                                    配图:
+                                                                </h4>
+                                                                <div className="relative aspect-video rounded-lg overflow-hidden border border-border/50 shadow-md group">
+                                                                    <Image
+                                                                        src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image}
+                                                                        alt={topic.title}
+                                                                        fill
+                                                                        className="object-contain transition-transform duration-300 group-hover:scale-105"
+                                                                    />
                                                                 </div>
-                                                            )}
-                                                            {topic.video && (
-                                                                <div>
-                                                                    <h3 className="text-sm font-semibold my-2 text-muted-foreground">发送视频:</h3>
-                                                                        <div className="relative w-full rounded-lg overflow-hidden border border-border">
-                                                                            <video src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`} controls className="w-full" />
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                        </CardContent>
-                                                    </Card>
-                                                );
-                                            })}
-                                            <Card className="bg-card/50 backdrop-blur-sm">
-                                                <CardHeader className="flex flex-row items-center justify-between">
-                                                    <CardTitle className="text-base font-medium">{`${selectedTopics.length + 2}. 结束语`}</CardTitle>
-                                                    <CopyButton content={closingText} id="wechat-closing" />
-                                                </CardHeader>
-                                                <CardContent>
-                                                    <Textarea value={closingText} readOnly rows={3} className="bg-background/70" />
-                                                </CardContent>
-                                            </Card>
-                                        </div>
+                                                            </div>
+                                                        )}
+
+                                                        {topic.video && (
+                                                                                                                         <div className="space-y-2">
+                                                                 <h4 className="text-sm font-semibold text-muted-foreground flex items-center">
+                                                                     <Play className="h-4 w-4 mr-2" />
+                                                                     视频 (单独发送):
+                                                                 </h4>
+                                                                <div className="relative rounded-lg overflow-hidden border border-border/50 shadow-md">
+                                                                    <video
+                                                                        src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
+                                                                        controls
+                                                                        className="w-full"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </CardContent>
+                                                </Card>
+                                            );
+                                        })}
+
+                                        {/* 结束语 */}
+                                        <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
+                                            <CardHeader className="flex flex-row items-center justify-between">
+                                                <div className="flex items-center space-x-2">
+                                                    <div className="p-2 bg-green-500/20 rounded-lg">
+                                                        <Check className="h-4 w-4 text-green-600" />
+                                                    </div>
+                                                    <CardTitle className="text-base font-medium">结束语</CardTitle>
+                                                </div>
+                                                <CopyButton content={closingText} id="wechat-closing" />
+                                            </CardHeader>
+                                            <CardContent>
+                                                <Textarea
+                                                    value={closingText}
+                                                    readOnly
+                                                    rows={3}
+                                                    className="bg-background/80 border-border/50 font-mono text-sm resize-none"
+                                                />
+                                            </CardContent>
+                                        </Card>
                                     </TabsContent>
-                                    <TabsContent value="social" className="mt-4">
+
+                                    <TabsContent value="social" className="mt-6">
                                         {renderSocialContent()}
                                     </TabsContent>
                                 </Tabs>
                             </div>
-                        )}
-                    </div>
-                )}
-            </main>
+                                                 )}
+                     </div>
+                 )}
+
+                 {/* 功能特性展示 */}
+                 {!mainReport && !loading && (
+                     <div className="mt-24">
+                         <FeatureStats />
+                     </div>
+                 )}
+            </div>
         </div>
     );
 }
