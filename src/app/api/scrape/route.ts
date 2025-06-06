@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { chromium } from "playwright";
+import path from "path";
+import fs from "fs/promises";
 
 export async function GET() {
   let browser;
@@ -49,10 +51,22 @@ export async function GET() {
     });
 
     if (articles.length === 0) {
+      const screenshotDir = path.join(process.cwd(), "public");
+      await fs.mkdir(screenshotDir, { recursive: true });
+      const screenshotPath = path.join(screenshotDir, "debug_screenshot.png");
+
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+
+      const htmlContent = await page.content();
+
       return NextResponse.json(
         {
           error:
-            "No articles found. The scraper might need adjustments if the site structure has changed.",
+            "No articles found. A screenshot and HTML content have been saved for debugging.",
+          debugInfo: {
+            screenshotUrl: "/debug_screenshot.png",
+            htmlContent: htmlContent,
+          },
         },
         { status: 500 }
       );
@@ -61,8 +75,9 @@ export async function GET() {
     return NextResponse.json({ articles });
   } catch (error) {
     console.error("Scraping error:", error);
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
     return NextResponse.json(
-      { error: "An error occurred during scraping with Playwright" },
+      { error: `An error occurred during scraping with Playwright: ${errorMessage}` },
       { status: 500 }
     );
   } finally {
