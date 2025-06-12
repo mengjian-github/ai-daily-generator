@@ -141,7 +141,8 @@ export default function Home() {
         const dailyReport = articles[0];
         if (!dailyReport) return "";
 
-        const header = `🤖 【AI Daily】${dailyReport.title}\n📅 ${dailyReport.date}\n\n`;
+        // 使用与微信群格式一致的开头
+        const header = `${openingText}\n\n`;
 
         const topicsContent = selectedTopics
             .map(
@@ -200,31 +201,44 @@ export default function Home() {
                                         <>
                                             {topic.image && !topic.image.includes("placehold.co") && (
                                                 <div key={`img-social-${topic.id}`} className="group relative aspect-square">
-                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
                                                     <Image
                                                         src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image}
                                                         alt={topic.title}
                                                         fill
                                                         className="object-cover rounded-xl shadow-md transition-transform duration-300 group-hover:scale-105"
+                                                        draggable={true}
+                                                        onContextMenu={(e) => e.stopPropagation()}
+                                                        style={{
+                                                            userSelect: 'auto',
+                                                            WebkitUserSelect: 'auto',
+                                                            MozUserSelect: 'auto'
+                                                        }}
                                                     />
-                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
                                                         <p className="text-white text-xs font-medium truncate">{topic.title}</p>
                                                     </div>
                                                 </div>
                                             )}
                                             {topic.video && (
                                                 <div key={`video-social-${topic.id}`} className="group relative aspect-square">
-                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
                                                     <video
                                                         src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
                                                         className="w-full h-full object-cover rounded-xl shadow-md transition-transform duration-300 group-hover:scale-105"
+                                                        onContextMenu={(e) => e.stopPropagation()}
+                                                        style={{
+                                                            userSelect: 'auto',
+                                                            WebkitUserSelect: 'auto',
+                                                            MozUserSelect: 'auto'
+                                                        }}
                                                     />
-                                                    <div className="absolute inset-0 flex items-center justify-center z-10">
+                                                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
                                                         <div className="p-3 bg-white/20 backdrop-blur-sm rounded-full">
                                                             <Play className="h-6 w-6 text-white" />
                                                         </div>
                                                     </div>
-                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
                                                         <p className="text-white text-xs font-medium truncate">{topic.title}</p>
                                                     </div>
                                                 </div>
