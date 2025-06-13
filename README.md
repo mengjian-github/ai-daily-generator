@@ -150,6 +150,23 @@ ai-daily-generator/
 - [Tailwind CSS](https://tailwindcss.com/) - 实用的CSS框架
 - [shadcn/ui](https://ui.shadcn.com/) - 精美的UI组件库
 
+## 🐳 Docker 部署说明
+
+### 1. 构建镜像
+```bash
+docker build -t ai-daily-generator .
+```
+
+### 2. 运行容器
+```bash
+docker run -d -p 3000:3000 --name ai-daily-generator ai-daily-generator
+```
+
+### 3. 访问服务
+浏览器打开 [http://localhost:3000](http://localhost:3000) 即可访问。
+
+> 如需自定义环境变量，可在 `docker run` 时添加 `-e` 参数。
+
 ---
 
 **AI Daily Generator** - 让AI资讯分享变得简单高效 🚀
