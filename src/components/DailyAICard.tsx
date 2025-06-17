@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Copy, Check, Download, RefreshCw, Sun, Moon, Star, Image } from "lucide-react";
+import { Copy, Check, Download, RefreshCw, Image } from "lucide-react";
 
 interface DailyAICardProps {
     onCopy?: (content: string) => void;
@@ -37,12 +36,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
         return `${year}.${month}.${day} ${weekday}`;
     };
 
-    const getCurrentTime = () => {
-        const now = new Date();
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        return `${hours}:${minutes}`;
-    };
+
 
     const getTimeGreeting = () => {
         const hour = new Date().getHours();
@@ -54,7 +48,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
     };
 
     // 获取氛围感背景图片 - 修复版本
-    const fetchBackgroundImage = async () => {
+    const fetchBackgroundImage = useCallback(async () => {
         setImageLoading(true);
         try {
             // 先获取图片
@@ -77,9 +71,9 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
         } finally {
             setImageLoading(false);
         }
-    };
+    }, [backgroundImage]);
 
-    const fetchQuote = async () => {
+    const fetchQuote = useCallback(async () => {
         setLoading(true);
         try {
             const response = await fetch('https://v1.hitokoto.cn/?c=d&c=i&c=k');
@@ -98,7 +92,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchQuote();
@@ -110,7 +104,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                 URL.revokeObjectURL(backgroundImage);
             }
         };
-    }, []);
+    }, [fetchQuote, fetchBackgroundImage, backgroundImage]);
 
     // 清理旧的blob URL当背景图片改变时
     useEffect(() => {
@@ -130,7 +124,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
     const copyToClipboard = async () => {
         try {
             if (cardRef.current) {
-                const html2canvas = (await import('html2canvas')).default as any;
+                const html2canvas = (await import('html2canvas')).default;
                 
                 // 等待图片完全加载
                 await new Promise(resolve => setTimeout(resolve, 100));
@@ -148,6 +142,9 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                         const images = clonedDoc.querySelectorAll('img');
                         images.forEach(img => {
                             img.style.display = 'block';
+                            if (!img.alt) {
+                                img.alt = '';
+                            }
                         });
                     }
                 });
@@ -163,7 +160,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                             setCopied(true);
                             setTimeout(() => setCopied(false), 2000);
                             onCopy?.('图片已复制到剪贴板');
-                        } catch (err) {
+                        } catch {
                             await navigator.clipboard.writeText(generateCardContent());
                             setCopied(true);
                             setTimeout(() => setCopied(false), 2000);
@@ -172,7 +169,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                     }
                 }, 'image/png');
             }
-        } catch (error) {
+        } catch {
             try {
                 await navigator.clipboard.writeText(generateCardContent());
                 setCopied(true);
@@ -187,7 +184,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
     const downloadAsImage = async () => {
         try {
             if (cardRef.current) {
-                const html2canvas = (await import('html2canvas')).default as any;
+                const html2canvas = (await import('html2canvas')).default;
                 
                 // 等待图片完全加载
                 await new Promise(resolve => setTimeout(resolve, 100));
@@ -205,6 +202,9 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                         const images = clonedDoc.querySelectorAll('img');
                         images.forEach(img => {
                             img.style.display = 'block';
+                            if (!img.alt) {
+                                img.alt = '';
+                            }
                         });
                     }
                 });
@@ -330,7 +330,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                             {/* 寄语 - 核心内容 */}
                             <div className="space-y-8">
                                 <blockquote className="text-xl font-medium leading-relaxed text-white/95 italic">
-                                    "{quote.hitokoto}"
+                                    &ldquo;{quote.hitokoto}&rdquo;
                                 </blockquote>
                                 <cite className="text-base text-white/60 font-light not-italic">
                                     — {quote.from_who ? `${quote.from_who}` : quote.from}
