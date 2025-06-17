@@ -4,6 +4,7 @@
 import { useState } from "react";
 import FeatureStats from "@/components/FeatureStats";
 import ThemeToggle from "@/components/ThemeToggle";
+import DailyAICard from "@/components/DailyAICard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -549,7 +550,7 @@ export default function Home() {
                                 </div>
 
                                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                                    <TabsList className="grid w-full grid-cols-2 bg-card/50 backdrop-blur-sm border border-border/50 shadow-lg">
+                                    <TabsList className="grid w-full grid-cols-3 bg-card/50 backdrop-blur-sm border border-border/50 shadow-lg">
                                         <TabsTrigger
                                             value="wechat"
                                             className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
@@ -561,6 +562,12 @@ export default function Home() {
                                             className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
                                         >
                                             朋友圈/知识星球
+                                        </TabsTrigger>
+                                        <TabsTrigger
+                                            value="daily-card"
+                                            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
+                                        >
+                                            每日AI早课
                                         </TabsTrigger>
                                     </TabsList>
 
@@ -689,6 +696,14 @@ export default function Home() {
 
                                     <TabsContent value="social" className="mt-6">
                                         {renderSocialContent()}
+                                    </TabsContent>
+
+                                    <TabsContent value="daily-card" className="mt-6">
+                                        <DailyAICard 
+                                            onCopy={(message) => {
+                                                console.log(message);
+                                            }}
+                                        />
                                     </TabsContent>
                                 </Tabs>
                             </div>
