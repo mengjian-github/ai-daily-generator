@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from "react";
@@ -77,6 +76,7 @@ export default function Home() {
     const [error, setError] = useState<FetchError | null>(null);
     const [activeTab, setActiveTab] = useState("wechat");
     const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
+    const [dataSource, setDataSource] = useState<"daily" | "realtime">("daily");
 
     const openingText = "#AI日课 ✨\n\n大家好，我来分享今日值得关注的 AI 动态 🚀";
     const closingText = "以上是最新 AI 精选资讯，大家 Get 了可以拍拍我哈～ 👏";
@@ -87,7 +87,7 @@ export default function Home() {
         setArticles([]);
         setSelectedTopics([]);
         try {
-            const res = await fetch("/api/scrape");
+            const res = await fetch(`/api/scrape?source=${dataSource}`);
             const data = await res.json();
 
             if (!res.ok) {
@@ -308,6 +308,36 @@ export default function Home() {
                          {/* 桌面端主题切换 */}
                          <div className="hidden lg:block">
                              <ThemeToggle />
+                         </div>
+
+                         {/* 数据源选择器 */}
+                         <div className="flex items-center gap-2 bg-card/50 backdrop-blur-sm border border-border/50 rounded-lg p-1">
+                             <button
+                                 onClick={() => setDataSource("daily")}
+                                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+                                     dataSource === "daily"
+                                         ? "bg-primary text-primary-foreground shadow-sm"
+                                         : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                 }`}
+                             >
+                                 <div className="flex items-center gap-2">
+                                     <Calendar className="h-4 w-4" />
+                                     <span>日报</span>
+                                 </div>
+                             </button>
+                             <button
+                                 onClick={() => setDataSource("realtime")}
+                                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+                                     dataSource === "realtime"
+                                         ? "bg-primary text-primary-foreground shadow-sm"
+                                         : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                 }`}
+                             >
+                                 <div className="flex items-center gap-2">
+                                     <Clock className="h-4 w-4" />
+                                     <span>实时24小时资讯</span>
+                                 </div>
+                             </button>
                          </div>
 
                          <Button
