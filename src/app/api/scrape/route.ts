@@ -228,11 +228,13 @@ async function getLatestDailyArticle(): Promise<Article> {
 async function getRealtimeNews(): Promise<Article> {
     try {
         const newsItems: Topic[] = [];
+        const allNewsItems: Topic[] = []; // 存储所有新闻，不限时间
         let topicIndex = 0;
         let page = 1;
         const maxPages = 5; // 最多爬取5页，避免无限循环
         const targetHours = 24; // 目标时间范围：24小时
         const pageSize = 20; // 每页20条
+        const fallbackCount = 20; // 降级时返回的新闻数量
 
         // 使用真实的API端点
         const API_URL = "https://app.chinaz.com/djflkdsoisknfoklsyhownfrlewfknoiaewf/ai/GetAiInfoList.aspx";
@@ -263,7 +265,7 @@ async function getRealtimeNews(): Promise<Article> {
         // 用于去重的 Set
         const seenNewsIds = new Set<string>();
 
-        while (page <= maxPages) {
+        while (page <= maxPages && allNewsItems.length < 100) { // 最多收集100条新闻
             try {
                 // 使用API获取数据
                 const apiUrl = `${API_URL}?flag=zh&type=1&page=${page}&pagesize=${pageSize}`;
@@ -291,8 +293,6 @@ async function getRealtimeNews(): Promise<Article> {
                         break;
                     }
 
-                    let shouldContinue = true;
-
                     for (let i = 0; i < newsLinks.length; i++) {
                         const linkElement = newsLinks.eq(i);
                         const href = linkElement.attr('href');
@@ -310,48 +310,48 @@ async function getRealtimeNews(): Promise<Article> {
                         }
                         seenNewsIds.add(newsId);
 
-                                                        // 获取时间信息
-                                const fullText = linkElement.text().trim();
-                                const timeMatch = fullText.match(/(\d+\s*分钟前|\d+\s*小时前|\d+\s*天前|昨天|前天)/);
+                        // 获取时间信息
+                        const fullText = linkElement.text().trim();
+                        const timeMatch = fullText.match(/(\d+\s*分钟前|\d+\s*小时前|\d+\s*天前|昨天|前天)/);
+                        
+                        let isWithin24Hours = true; // 默认认为在24小时内
+                        if (timeMatch) {
+                            const timeText = timeMatch[0];
+                            const minutes = parseTimeToMinutes(timeText);
 
-                                if (timeMatch) {
-                                    const timeText = timeMatch[0];
-                                    const minutes = parseTimeToMinutes(timeText);
+                            if (minutes !== null && minutes > targetHours * 60) {
+                                isWithin24Hours = false;
+                                console.log(`发现超过24小时的新闻（${timeText}）`);
+                            }
+                        }
 
-                                    if (minutes !== null && minutes > targetHours * 60) {
-                                        console.log(`发现超过24小时的新闻（${timeText}），停止爬取`);
-                                        shouldContinue = false;
-                                        break;
-                                    }
-                                }
+                        // 构建完整的中文URL - 确保包含 /zh/
+                        let newsUrl: string;
+                        if (href.startsWith('http')) {
+                            newsUrl = href;
+                        } else if (href.startsWith('/zh/')) {
+                            newsUrl = `https://www.aibase.com${href}`;
+                        } else if (href.match(/^\/news\/\d+$/)) {
+                            // 如果是 /news/12345 格式，转换为 /zh/news/12345
+                            newsUrl = `https://www.aibase.com/zh${href}`;
+                        } else {
+                            newsUrl = `https://www.aibase.com${href}`;
+                        }
 
-                                // 构建完整的中文URL - 确保包含 /zh/
-                                let newsUrl: string;
-                                if (href.startsWith('http')) {
-                                    newsUrl = href;
-                                } else if (href.startsWith('/zh/')) {
-                                    newsUrl = `https://www.aibase.com${href}`;
-                                } else if (href.match(/^\/news\/\d+$/)) {
-                                    // 如果是 /news/12345 格式，转换为 /zh/news/12345
-                                    newsUrl = `https://www.aibase.com/zh${href}`;
-                                } else {
-                                    newsUrl = `https://www.aibase.com${href}`;
-                                }
+                        try {
+                            // 从链接元素中提取信息
+                            const title = linkElement.find('h3').text().trim();
 
-                                try {
-                                    // 从链接元素中提取信息
-                                    const title = linkElement.find('h3').text().trim();
+                            // 提取摘要 - 查找不包含时间信息的文本
+                            const fullTextForSummary = linkElement.text().trim();
+                            const summaryMatch = fullTextForSummary.match(/[^.]+(?:电影感|模型|AI|技术|发布|推出|测试|智能|数据|创新|应用|平台|系统|开发|研究|公司|产品).*/);
+                            let summary = summaryMatch ? summaryMatch[0].substring(0, 200) : fullTextForSummary.substring(0, 200);
 
-                                    // 提取摘要 - 查找不包含时间信息的文本
-                                    const fullTextForSummary = linkElement.text().trim();
-                                    const summaryMatch = fullTextForSummary.match(/[^.]+(?:电影感|模型|AI|技术|发布|推出|测试|智能|数据|创新|应用|平台|系统|开发|研究|公司|产品).*/);
-                                    let summary = summaryMatch ? summaryMatch[0].substring(0, 200) : fullTextForSummary.substring(0, 200);
+                            // 查找图片
+                            const imageElement = linkElement.find('img').first();
+                            const image = imageElement.attr('src') || '';
 
-                                    // 查找图片
-                                    const imageElement = linkElement.find('img').first();
-                                    const image = imageElement.attr('src') || '';
-
-                                    if (title && summary) {
+                            if (title && summary) {
                                 // 尝试从详情页获取真实的项目链接
                                 let projectUrl = '';
                                 try {
@@ -418,14 +418,22 @@ async function getRealtimeNews(): Promise<Article> {
                                     console.log(`无法获取详情页内容: ${newsUrl}`);
                                 }
 
-                                newsItems.push({
+                                const newsItem = {
                                     id: topicIndex++,
                                     title,
                                     summary: summary.substring(0, 500) + (summary.length > 500 ? '...' : ''),
                                     url: projectUrl, // 使用真实的项目链接，如果没有则为空字符串
                                     image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
                                     video: undefined
-                                });
+                                };
+
+                                // 添加到所有新闻列表
+                                allNewsItems.push(newsItem);
+                                
+                                // 如果在24小时内，也添加到24小时新闻列表
+                                if (isWithin24Hours) {
+                                    newsItems.push(newsItem);
+                                }
                             }
                         } catch (itemError) {
                             console.error(`Error processing news item:`, itemError);
@@ -433,9 +441,6 @@ async function getRealtimeNews(): Promise<Article> {
                         }
                     }
 
-                    if (!shouldContinue) {
-                        break;
-                    }
                     continue;
                 }
 
@@ -449,8 +454,6 @@ async function getRealtimeNews(): Promise<Article> {
                         break;
                     }
 
-                    let shouldContinue = true;
-
                     for (const newsItem of newsList) {
                         // 提取新闻ID用于去重
                         const newsId = newsItem.Id || newsItem.id || newsItem.newsid;
@@ -462,17 +465,25 @@ async function getRealtimeNews(): Promise<Article> {
                         }
                         seenNewsIds.add(String(newsId));
 
+                        let isWithin24Hours = true; // 默认认为在24小时内
+                        
                         // 检查时间 - 使用 addtime 字段
                         if (newsItem.addtime) {
-                            // 解析时间字符串，格式如 "2025-06-24 10:34:24"
+                            // 解析时间字符串，格式如 "2025-01-15 10:34:24"
                             const newsDate = new Date(newsItem.addtime);
                             const now = new Date();
+                            
+                            // 验证日期有效性（不能是未来日期）
+                            if (newsDate > now) {
+                                console.log(`忽略未来日期的新闻（${newsItem.addtime}）`);
+                                continue;
+                            }
+                            
                             const hoursAgo = (now.getTime() - newsDate.getTime()) / (1000 * 60 * 60);
 
                             if (hoursAgo > targetHours) {
-                                console.log(`发现超过24小时的新闻（${newsItem.addtime}），停止爬取`);
-                                shouldContinue = false;
-                                break;
+                                isWithin24Hours = false;
+                                console.log(`发现超过24小时的新闻（${newsItem.addtime}）`);
                             }
                         }
 
@@ -562,19 +573,23 @@ async function getRealtimeNews(): Promise<Article> {
                                 console.log(`无法获取详情页内容: ${newsUrl}`);
                             }
 
-                            newsItems.push({
+                            const newsItemData = {
                                 id: topicIndex++,
                                 title,
                                 summary: summary.substring(0, 500) + (summary.length > 500 ? '...' : ''),
                                 url: projectUrl, // 使用真实的项目链接，如果没有则为空字符串
                                 image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
                                 video: undefined
-                            });
-                        }
-                    }
+                            };
 
-                    if (!shouldContinue) {
-                        break;
+                            // 添加到所有新闻列表
+                            allNewsItems.push(newsItemData);
+                            
+                            // 如果在24小时内，也添加到24小时新闻列表
+                            if (isWithin24Hours) {
+                                newsItems.push(newsItemData);
+                            }
+                        }
                     }
                 } else {
                     console.log(`第 ${page} 页数据格式不正确，不是数组格式`);
@@ -584,22 +599,34 @@ async function getRealtimeNews(): Promise<Article> {
             } catch (pageError) {
                 console.error(`获取第 ${page} 页失败:`, pageError);
                 // 如果是第一页就失败，则抛出错误；否则继续处理已有数据
-                if (page === 1) {
+                if (page === 1 && allNewsItems.length === 0) {
                     throw pageError;
                 }
                 break;
             }
 
-            console.log(`第 ${page} 页爬取完成，已获取 ${newsItems.length} 条新闻（去重后）`);
+            console.log(`第 ${page} 页爬取完成，24小时内新闻 ${newsItems.length} 条，总新闻 ${allNewsItems.length} 条`);
             page++;
         }
 
-        // 如果没有获取到任何新闻，返回错误
-        if (newsItems.length === 0) {
+        // 决定返回哪些新闻
+        let finalNewsItems: Topic[];
+        let description: string;
+        
+        if (newsItems.length > 0) {
+            // 如果有24小时内的新闻，使用24小时内的
+            finalNewsItems = newsItems;
+            description = `最新 24 小时 AI 行业动态和技术进展（共 ${newsItems.length} 条）`;
+            console.log(`总共获取了 ${newsItems.length} 条24小时内的新闻`);
+        } else if (allNewsItems.length > 0) {
+            // 如果没有24小时内的新闻，但有其他新闻，返回前20条
+            finalNewsItems = allNewsItems.slice(0, fallbackCount);
+            description = `最新 AI 行业动态和技术进展（共 ${finalNewsItems.length} 条）`;
+            console.log(`24小时内没有新闻，返回最新的 ${finalNewsItems.length} 条新闻`);
+        } else {
+            // 如果完全没有新闻，抛出错误
             throw new Error('未能获取到任何新闻内容，请检查网页结构是否发生变化');
         }
-
-        console.log(`总共获取了 ${newsItems.length} 条24小时内的新闻（去重后）`);
 
         // 返回整合的文章数据
         const now = new Date();
@@ -612,11 +639,11 @@ async function getRealtimeNews(): Promise<Article> {
         return {
             title: `AI 实时资讯 - ${dateStr}`,
             date: dateStr,
-            description: `最新 24 小时 AI 行业动态和技术进展（共 ${newsItems.length} 条）`,
+            description,
             source: "AIbase 实时资讯",
             url: REALTIME_URL,
             image: "https://www.aibase.com/favicon.ico",
-            topics: newsItems
+            topics: finalNewsItems
         };
 
     } catch (error) {
