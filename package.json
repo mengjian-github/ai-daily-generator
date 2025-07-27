@@ -28,7 +28,6 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@types/html2canvas": "^1.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

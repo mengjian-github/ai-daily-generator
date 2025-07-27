@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 
 const DAILY_URL = "https://www.aibase.com/zh/daily";
-const REALTIME_URL = "https://www.aibase.com/zh/news";
+const REALTIME_URL = "https://news.aibase.com/zh/news";
+const NEW_API_BASE = "https://mcpapi.aibase.cn/api/aiInfo/aiNews";
 
 interface Article {
     title: string;
@@ -26,18 +27,18 @@ interface Topic {
 async function fetchWithHeaders(url: string): Promise<string> {
     const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'zh-CN,zh;q=0.9,zh-TW;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
         'DNT': '1',
         'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
+        'Referer': 'https://news.aibase.com/zh/news',
+        'Origin': 'https://news.aibase.com',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site',
     };
 
     const response = await fetch(url, { headers });
@@ -233,11 +234,9 @@ async function getRealtimeNews(): Promise<Article> {
         let page = 1;
         const maxPages = 5; // 最多爬取5页，避免无限循环
         const targetHours = 24; // 目标时间范围：24小时
-        const pageSize = 20; // 每页20条
         const fallbackCount = 20; // 降级时返回的新闻数量
 
-        // 使用真实的API端点
-        const API_URL = "https://app.chinaz.com/djflkdsoisknfoklsyhownfrlewfknoiaewf/ai/GetAiInfoList.aspx";
+        // 使用Web scraping方式获取新数据源内容
 
         // 解析时间文本，返回分钟数
         function parseTimeToMinutes(timeText: string): number | null {
@@ -267,8 +266,9 @@ async function getRealtimeNews(): Promise<Article> {
 
         while (page <= maxPages && allNewsItems.length < 100) { // 最多收集100条新闻
             try {
-                // 使用API获取数据
-                const apiUrl = `${API_URL}?flag=zh&type=1&page=${page}&pagesize=${pageSize}`;
+                // 使用新的API格式获取数据
+                const timestamp = Date.now();
+                const apiUrl = `${API_URL}?t=${timestamp}&langType=zh_cn&pageNo=${page}`;
                 console.log(`正在获取第 ${page} 页数据: ${apiUrl}`);
 
                 const response = await fetchWithHeaders(apiUrl);
@@ -277,6 +277,7 @@ async function getRealtimeNews(): Promise<Article> {
                 let data;
                 try {
                     data = JSON.parse(response);
+                    console.log(`第 ${page} 页API响应:`, JSON.stringify(data, null, 2));
                 } catch {
                     console.error(`第 ${page} 页JSON解析失败，尝试解析HTML`);
                     // 如果不是JSON，则回退到HTML解析
@@ -467,15 +468,16 @@ async function getRealtimeNews(): Promise<Article> {
 
                         let isWithin24Hours = true; // 默认认为在24小时内
                         
-                        // 检查时间 - 使用 addtime 字段
-                        if (newsItem.addtime) {
-                            // 解析时间字符串，格式如 "2025-01-15 10:34:24"
-                            const newsDate = new Date(newsItem.addtime);
+                        // 检查时间 - 适配新的时间字段格式
+                        const publishTime = newsItem.addtime || newsItem.publishTime || newsItem.created_at || newsItem.Created_at;
+                        if (publishTime) {
+                            // 解析时间字符串，格式可能为 "2025-01-15 10:34:24" 或 ISO 格式
+                            const newsDate = new Date(publishTime);
                             const now = new Date();
                             
                             // 验证日期有效性（不能是未来日期）
                             if (newsDate > now) {
-                                console.log(`忽略未来日期的新闻（${newsItem.addtime}）`);
+                                console.log(`忽略未来日期的新闻（${publishTime}）`);
                                 continue;
                             }
                             
@@ -483,28 +485,30 @@ async function getRealtimeNews(): Promise<Article> {
 
                             if (hoursAgo > targetHours) {
                                 isWithin24Hours = false;
-                                console.log(`发现超过24小时的新闻（${newsItem.addtime}）`);
+                                console.log(`发现超过24小时的新闻（${publishTime}）`);
                             }
                         }
 
-                        // 构建新闻URL
+                        // 构建新闻URL - 使用新的news.aibase.com域名
                         let newsUrl = newsItem.url;
                         if (!newsUrl && newsItem.Id) {
-                            newsUrl = `https://www.aibase.com/zh/news/${newsItem.Id}`;
+                            newsUrl = `https://news.aibase.com/zh/news/${newsItem.Id}`;
+                        } else if (!newsUrl && newsItem.id) {
+                            newsUrl = `https://news.aibase.com/zh/news/${newsItem.id}`;
                         }
 
-                        // 提取信息
-                        const title = newsItem.title || '';
-                        let summary = newsItem.description || '';
+                        // 提取信息 - 适配新的AIbase API格式
+                        const title = newsItem.title || newsItem.Title || '';
+                        let summary = newsItem.description || newsItem.Description || newsItem.summary || '';
 
                         // 如果有HTML格式的summary，提取文本内容
-                        if (newsItem.summary) {
-                            const $summary = cheerio.load(newsItem.summary);
+                        if (summary && summary.includes('<')) {
+                            const $summary = cheerio.load(summary);
                             // 移除所有HTML标签，只保留文本
                             summary = $summary.root().text().trim();
                         }
 
-                        const image = newsItem.thumb || newsItem.image || '';
+                        const image = newsItem.thumb || newsItem.image || newsItem.Thumb || newsItem.Image || '';
 
                         if (title && newsUrl) {
                             // 尝试从详情页获取真实的项目链接
@@ -640,7 +644,7 @@ async function getRealtimeNews(): Promise<Article> {
             title: `AI 实时资讯 - ${dateStr}`,
             date: dateStr,
             description,
-            source: "AIbase 实时资讯",
+            source: "AIbase新闻中心", 
             url: REALTIME_URL,
             image: "https://www.aibase.com/favicon.ico",
             topics: finalNewsItems
