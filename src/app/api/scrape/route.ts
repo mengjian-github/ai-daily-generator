@@ -3,7 +3,7 @@ import * as cheerio from "cheerio";
 
 const DAILY_URL = "https://www.aibase.com/zh/daily";
 const REALTIME_URL = "https://news.aibase.com/zh/news";
-const NEW_API_BASE = "https://mcpapi.aibase.cn/api/aiInfo/aiNews";
+const API_BASE = "https://mcpapi.aibase.cn/api/aiInfo/aiNews";
 
 interface Article {
     title: string;
@@ -226,413 +226,85 @@ async function getLatestDailyArticle(): Promise<Article> {
     }
 }
 
+interface ApiResponse {
+    code: number;
+    msg: string;
+    data: {
+        totalCount: number;
+        pageSize: number;
+        pageNo: number;
+        totalPage: number;
+        list: ApiNewsItem[];
+    };
+}
+
+interface ApiNewsItem {
+    title: string;
+    subtitle: string;
+    thumb: string;
+    sourceName: string;
+    author: string;
+    description: string;
+    oid: number;
+    createTime: string;
+    pv: number;
+}
+
 async function getRealtimeNews(): Promise<Article> {
     try {
         const newsItems: Topic[] = [];
-        const allNewsItems: Topic[] = []; // 存储所有新闻，不限时间
         let topicIndex = 0;
         let page = 1;
-        const maxPages = 5; // 最多爬取5页，避免无限循环
-        const targetHours = 24; // 目标时间范围：24小时
-        const fallbackCount = 20; // 降级时返回的新闻数量
+        const maxPages = 3; // 最多爬取3页
+        const targetCount = 20; // 目标新闻数量
 
-        // 使用Web scraping方式获取新数据源内容
+        console.log('开始获取实时新闻数据...');
 
-        // 解析时间文本，返回分钟数
-        function parseTimeToMinutes(timeText: string): number | null {
-            // 匹配各种时间格式
-            const patterns = [
-                { regex: /(\d+)\s*分钟前/, multiplier: 1 },
-                { regex: /(\d+)\s*小时前/, multiplier: 60 },
-                { regex: /(\d+)\s*天前/, multiplier: 60 * 24 },
-                { regex: /昨天/, multiplier: 60 * 24 }, // 昨天按24小时算
-                { regex: /前天/, multiplier: 60 * 48 }, // 前天按48小时算
-            ];
-
-            for (const pattern of patterns) {
-                const match = timeText.match(pattern.regex);
-                if (match) {
-                    if (pattern.regex.test('昨天') || pattern.regex.test('前天')) {
-                        return pattern.multiplier;
-                    }
-                    return parseInt(match[1]) * pattern.multiplier;
-                }
-            }
-            return null;
-        }
-
-        // 用于去重的 Set
-        const seenNewsIds = new Set<string>();
-
-        while (page <= maxPages && allNewsItems.length < 100) { // 最多收集100条新闻
+        while (page <= maxPages && newsItems.length < targetCount) {
             try {
-                // 使用新的API格式获取数据
+                // 使用API获取数据
                 const timestamp = Date.now();
-                const apiUrl = `${API_URL}?t=${timestamp}&langType=zh_cn&pageNo=${page}`;
+                const apiUrl = `${API_BASE}?t=${timestamp}&langType=zh_cn&pageNo=${page}`;
                 console.log(`正在获取第 ${page} 页数据: ${apiUrl}`);
 
                 const response = await fetchWithHeaders(apiUrl);
+                const data: ApiResponse = JSON.parse(response);
 
-                // 尝试解析JSON响应
-                let data;
-                try {
-                    data = JSON.parse(response);
-                    console.log(`第 ${page} 页API响应:`, JSON.stringify(data, null, 2));
-                } catch {
-                    console.error(`第 ${page} 页JSON解析失败，尝试解析HTML`);
-                    // 如果不是JSON，则回退到HTML解析
-                    const $ = cheerio.load(response);
-
-                    // 查找所有包含新闻ID的链接
-                    const newsLinks = $('a').filter((_, el) => {
-                        const href = $(el).attr('href');
-                        return !!(href && href.match(/\/news\/\d+$/));
-                    });
-
-                    if (newsLinks.length === 0) {
-                        console.log(`第 ${page} 页没有找到新闻链接，停止爬取`);
-                        break;
-                    }
-
-                    for (let i = 0; i < newsLinks.length; i++) {
-                        const linkElement = newsLinks.eq(i);
-                        const href = linkElement.attr('href');
-
-                        if (!href) continue;
-
-                        // 提取新闻ID用于去重
-                        const newsIdMatch = href.match(/\/news\/(\d+)$/);
-                        const newsId = newsIdMatch ? newsIdMatch[1] : href;
-
-                        // 如果已经处理过这条新闻，跳过
-                        if (seenNewsIds.has(newsId)) {
-                            console.log(`跳过重复新闻: ${newsId}`);
-                            continue;
-                        }
-                        seenNewsIds.add(newsId);
-
-                        // 获取时间信息
-                        const fullText = linkElement.text().trim();
-                        const timeMatch = fullText.match(/(\d+\s*分钟前|\d+\s*小时前|\d+\s*天前|昨天|前天)/);
-                        
-                        let isWithin24Hours = true; // 默认认为在24小时内
-                        if (timeMatch) {
-                            const timeText = timeMatch[0];
-                            const minutes = parseTimeToMinutes(timeText);
-
-                            if (minutes !== null && minutes > targetHours * 60) {
-                                isWithin24Hours = false;
-                                console.log(`发现超过24小时的新闻（${timeText}）`);
-                            }
-                        }
-
-                        // 构建完整的中文URL - 确保包含 /zh/
-                        let newsUrl: string;
-                        if (href.startsWith('http')) {
-                            newsUrl = href;
-                        } else if (href.startsWith('/zh/')) {
-                            newsUrl = `https://www.aibase.com${href}`;
-                        } else if (href.match(/^\/news\/\d+$/)) {
-                            // 如果是 /news/12345 格式，转换为 /zh/news/12345
-                            newsUrl = `https://www.aibase.com/zh${href}`;
-                        } else {
-                            newsUrl = `https://www.aibase.com${href}`;
-                        }
-
-                        try {
-                            // 从链接元素中提取信息
-                            const title = linkElement.find('h3').text().trim();
-
-                            // 提取摘要 - 查找不包含时间信息的文本
-                            const fullTextForSummary = linkElement.text().trim();
-                            const summaryMatch = fullTextForSummary.match(/[^.]+(?:电影感|模型|AI|技术|发布|推出|测试|智能|数据|创新|应用|平台|系统|开发|研究|公司|产品).*/);
-                            let summary = summaryMatch ? summaryMatch[0].substring(0, 200) : fullTextForSummary.substring(0, 200);
-
-                            // 查找图片
-                            const imageElement = linkElement.find('img').first();
-                            const image = imageElement.attr('src') || '';
-
-                            if (title && summary) {
-                                // 尝试从详情页获取真实的项目链接
-                                let projectUrl = '';
-                                try {
-                                    const detailPageHtml = await fetchWithHeaders(newsUrl);
-                                    const $detail = cheerio.load(detailPageHtml);
-                                    const article = $detail('article').first();
-
-                                    if (article.length > 0) {
-                                        // 如果没有摘要，尝试从详情页获取
-                                        if (!summary) {
-                                            let detailContent = '';
-                                            article.find('p').slice(0, 3).each((_, p) => {
-                                                const text = $detail(p).text().trim();
-                                                if (text &&
-                                                    !text.includes('【AiBase提要') &&
-                                                    !text.includes('图源备注') &&
-                                                    !text.includes('欢迎来到【AI日报】') &&
-                                                    text.length > 20) {
-                                                    detailContent += (detailContent ? '\n' : '') + text;
-                                                }
-                                            });
-                                            if (detailContent) {
-                                                summary = detailContent.substring(0, 500) + '...';
-                                            }
-                                        }
-
-                                        // 查找文章中的外部链接（项目真实链接）
-                                        article.find('a').each((_, link) => {
-                                            const href = $detail(link).attr('href');
-                                            const linkText = $detail(link).text().trim();
-
-                                            // 排除AIbase内部链接和标签链接
-                                            if (href &&
-                                                !href.includes('aibase.com') &&
-                                                !href.includes('/zh/search/') &&
-                                                !href.includes('/zh/news/') &&
-                                                !href.startsWith('#') &&
-                                                !href.startsWith('/') &&
-                                                (href.startsWith('http://') || href.startsWith('https://')) &&
-                                                linkText.length > 0) {
-                                                projectUrl = href;
-                                                return false; // 找到第一个有效链接就停止
-                                            }
-                                        });
-
-                                        // 如果没有找到链接元素，尝试从段落中提取链接
-                                        if (!projectUrl) {
-                                            article.find('p').each((_, p) => {
-                                                const text = $detail(p).text().trim();
-                                                // 查找包含链接格式的文本（如"地址：https://..."）
-                                                const urlMatch = text.match(/(?:地址|链接|网址|URL|官网|项目地址|体验地址|访问地址)[\s:：]*(https?:\/\/[^\s]+)/i);
-                                                if (urlMatch && urlMatch[1]) {
-                                                    const potentialUrl = urlMatch[1];
-                                                    // 排除AIbase的链接
-                                                    if (!potentialUrl.includes('aibase.com')) {
-                                                        projectUrl = potentialUrl;
-                                                        return false;
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    }
-                                } catch {
-                                    console.log(`无法获取详情页内容: ${newsUrl}`);
-                                }
-
-                                const newsItem = {
-                                    id: topicIndex++,
-                                    title,
-                                    summary: summary.substring(0, 500) + (summary.length > 500 ? '...' : ''),
-                                    url: projectUrl, // 使用真实的项目链接，如果没有则为空字符串
-                                    image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
-                                    video: undefined
-                                };
-
-                                // 添加到所有新闻列表
-                                allNewsItems.push(newsItem);
-                                
-                                // 如果在24小时内，也添加到24小时新闻列表
-                                if (isWithin24Hours) {
-                                    newsItems.push(newsItem);
-                                }
-                            }
-                        } catch (itemError) {
-                            console.error(`Error processing news item:`, itemError);
-                            continue;
-                        }
-                    }
-
-                    continue;
-                }
-
-                // 如果是JSON数据，处理JSON格式的响应
-                if (Array.isArray(data)) {
-                    // API直接返回的是数组格式
-                    const newsList = data;
-
-                    if (newsList.length === 0) {
-                        console.log(`第 ${page} 页没有更多新闻，停止爬取`);
-                        break;
-                    }
-
-                    for (const newsItem of newsList) {
-                        // 提取新闻ID用于去重
-                        const newsId = newsItem.Id || newsItem.id || newsItem.newsid;
-
-                        // 如果已经处理过这条新闻，跳过
-                        if (seenNewsIds.has(String(newsId))) {
-                            console.log(`跳过重复新闻: ${newsId}`);
-                            continue;
-                        }
-                        seenNewsIds.add(String(newsId));
-
-                        let isWithin24Hours = true; // 默认认为在24小时内
-                        
-                        // 检查时间 - 适配新的时间字段格式
-                        const publishTime = newsItem.addtime || newsItem.publishTime || newsItem.created_at || newsItem.Created_at;
-                        if (publishTime) {
-                            // 解析时间字符串，格式可能为 "2025-01-15 10:34:24" 或 ISO 格式
-                            const newsDate = new Date(publishTime);
-                            const now = new Date();
-                            
-                            // 验证日期有效性（不能是未来日期）
-                            if (newsDate > now) {
-                                console.log(`忽略未来日期的新闻（${publishTime}）`);
-                                continue;
-                            }
-                            
-                            const hoursAgo = (now.getTime() - newsDate.getTime()) / (1000 * 60 * 60);
-
-                            if (hoursAgo > targetHours) {
-                                isWithin24Hours = false;
-                                console.log(`发现超过24小时的新闻（${publishTime}）`);
-                            }
-                        }
-
-                        // 构建新闻URL - 使用新的news.aibase.com域名
-                        let newsUrl = newsItem.url;
-                        if (!newsUrl && newsItem.Id) {
-                            newsUrl = `https://news.aibase.com/zh/news/${newsItem.Id}`;
-                        } else if (!newsUrl && newsItem.id) {
-                            newsUrl = `https://news.aibase.com/zh/news/${newsItem.id}`;
-                        }
-
-                        // 提取信息 - 适配新的AIbase API格式
-                        const title = newsItem.title || newsItem.Title || '';
-                        let summary = newsItem.description || newsItem.Description || newsItem.summary || '';
-
-                        // 如果有HTML格式的summary，提取文本内容
-                        if (summary && summary.includes('<')) {
-                            const $summary = cheerio.load(summary);
-                            // 移除所有HTML标签，只保留文本
-                            summary = $summary.root().text().trim();
-                        }
-
-                        const image = newsItem.thumb || newsItem.image || newsItem.Thumb || newsItem.Image || '';
-
-                        if (title && newsUrl) {
-                            // 尝试从详情页获取真实的项目链接
-                            let projectUrl = '';
-                            try {
-                                const detailPageHtml = await fetchWithHeaders(newsUrl);
-                                const $detail = cheerio.load(detailPageHtml);
-                                const article = $detail('article').first();
-
-                                if (article.length > 0) {
-                                    // 如果没有摘要，尝试从详情页获取
-                                    if (!summary) {
-                                        let detailContent = '';
-                                        article.find('p').slice(0, 3).each((_, p) => {
-                                            const text = $detail(p).text().trim();
-                                            if (text &&
-                                                !text.includes('【AiBase提要') &&
-                                                !text.includes('图源备注') &&
-                                                !text.includes('欢迎来到【AI日报】') &&
-                                                text.length > 20) {
-                                                detailContent += (detailContent ? '\n' : '') + text;
-                                            }
-                                        });
-                                        if (detailContent) {
-                                            summary = detailContent.substring(0, 500) + '...';
-                                        }
-                                    }
-
-                                    // 查找文章中的外部链接（项目真实链接）
-                                    article.find('a').each((_, link) => {
-                                        const href = $detail(link).attr('href');
-                                        const linkText = $detail(link).text().trim();
-
-                                        // 排除AIbase内部链接和标签链接
-                                        if (href &&
-                                            !href.includes('aibase.com') &&
-                                            !href.includes('/zh/search/') &&
-                                            !href.includes('/zh/news/') &&
-                                            !href.startsWith('#') &&
-                                            !href.startsWith('/') &&
-                                            (href.startsWith('http://') || href.startsWith('https://')) &&
-                                            linkText.length > 0) {
-                                            projectUrl = href;
-                                            return false; // 找到第一个有效链接就停止
-                                        }
-                                    });
-
-                                    // 如果没有找到链接元素，尝试从段落中提取链接
-                                    if (!projectUrl) {
-                                        article.find('p').each((_, p) => {
-                                            const text = $detail(p).text().trim();
-                                            // 查找包含链接格式的文本（如"地址：https://..."）
-                                            const urlMatch = text.match(/(?:地址|链接|网址|URL|官网|项目地址|体验地址|访问地址)[\s:：]*(https?:\/\/[^\s]+)/i);
-                                            if (urlMatch && urlMatch[1]) {
-                                                const potentialUrl = urlMatch[1];
-                                                // 排除AIbase的链接
-                                                if (!potentialUrl.includes('aibase.com')) {
-                                                    projectUrl = potentialUrl;
-                                                    return false;
-                                                }
-                                            }
-                                        });
-                                    }
-                                }
-                            } catch {
-                                console.log(`无法获取详情页内容: ${newsUrl}`);
-                            }
-
-                            const newsItemData = {
-                                id: topicIndex++,
-                                title,
-                                summary: summary.substring(0, 500) + (summary.length > 500 ? '...' : ''),
-                                url: projectUrl, // 使用真实的项目链接，如果没有则为空字符串
-                                image: image || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
-                                video: undefined
-                            };
-
-                            // 添加到所有新闻列表
-                            allNewsItems.push(newsItemData);
-                            
-                            // 如果在24小时内，也添加到24小时新闻列表
-                            if (isWithin24Hours) {
-                                newsItems.push(newsItemData);
-                            }
-                        }
-                    }
-                } else {
-                    console.log(`第 ${page} 页数据格式不正确，不是数组格式`);
+                if (data.code !== 200 || !data.data?.list) {
+                    console.error(`第 ${page} 页API响应异常:`, data);
                     break;
                 }
 
+                console.log(`第 ${page} 页获取到 ${data.data.list.length} 条新闻`);
+
+                // 处理API返回的新闻数据
+                for (const item of data.data.list) {
+                    if (newsItems.length >= targetCount) {
+                        break;
+                    }
+
+                    // 构建新闻项目
+                    const newsItem: Topic = {
+                        id: topicIndex++,
+                        title: item.title || '无标题',
+                        summary: item.description || '暂无描述',
+                        url: `https://news.aibase.com/zh/news/${item.oid}`,
+                        image: item.thumb || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
+                        video: undefined
+                    };
+
+                    newsItems.push(newsItem);
+                    console.log(`添加新闻: ${newsItem.title}`);
+                }
+
+                page++;
             } catch (pageError) {
                 console.error(`获取第 ${page} 页失败:`, pageError);
-                // 如果是第一页就失败，则抛出错误；否则继续处理已有数据
-                if (page === 1 && allNewsItems.length === 0) {
-                    throw pageError;
-                }
                 break;
             }
-
-            console.log(`第 ${page} 页爬取完成，24小时内新闻 ${newsItems.length} 条，总新闻 ${allNewsItems.length} 条`);
-            page++;
         }
 
-        // 决定返回哪些新闻
-        let finalNewsItems: Topic[];
-        let description: string;
-        
-        if (newsItems.length > 0) {
-            // 如果有24小时内的新闻，使用24小时内的
-            finalNewsItems = newsItems;
-            description = `最新 24 小时 AI 行业动态和技术进展（共 ${newsItems.length} 条）`;
-            console.log(`总共获取了 ${newsItems.length} 条24小时内的新闻`);
-        } else if (allNewsItems.length > 0) {
-            // 如果没有24小时内的新闻，但有其他新闻，返回前20条
-            finalNewsItems = allNewsItems.slice(0, fallbackCount);
-            description = `最新 AI 行业动态和技术进展（共 ${finalNewsItems.length} 条）`;
-            console.log(`24小时内没有新闻，返回最新的 ${finalNewsItems.length} 条新闻`);
-        } else {
-            // 如果完全没有新闻，抛出错误
-            throw new Error('未能获取到任何新闻内容，请检查网页结构是否发生变化');
-        }
-
-        // 返回整合的文章数据
+        // 构建返回的文章数据
         const now = new Date();
         const dateStr = now.toLocaleDateString('zh-CN', {
             year: 'numeric',
@@ -640,14 +312,18 @@ async function getRealtimeNews(): Promise<Article> {
             day: 'numeric'
         });
 
+        const description = newsItems.length > 0
+            ? `今日为您精选了 ${newsItems.length} 条最新AI资讯，涵盖技术突破、产品发布、行业动态等多个方面。`
+            : '暂无最新资讯';
+
         return {
             title: `AI 实时资讯 - ${dateStr}`,
             date: dateStr,
             description,
-            source: "AIbase新闻中心", 
+            source: "AIbase新闻中心",
             url: REALTIME_URL,
             image: "https://www.aibase.com/favicon.ico",
-            topics: finalNewsItems
+            topics: newsItems
         };
 
     } catch (error) {
@@ -659,7 +335,7 @@ async function getRealtimeNews(): Promise<Article> {
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const source = searchParams.get('source') || 'daily';
+        const source = searchParams.get('source') || 'realtime'; // 默认使用实时新闻
 
         let dailyReportArticle: Article;
 
