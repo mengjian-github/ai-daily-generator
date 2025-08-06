@@ -250,6 +250,69 @@ interface ApiNewsItem {
     pv: number;
 }
 
+// 从新闻详情页提取真实的项目链接
+async function extractProjectUrl(newsId: number): Promise<string> {
+    try {
+        const detailUrl = `https://news.aibase.com/zh/news/${newsId}`;
+        console.log(`正在提取项目链接: ${detailUrl}`);
+
+        const response = await fetchWithHeaders(detailUrl);
+        const $ = cheerio.load(response);
+
+        // 查找文章内容区域
+        const article = $('article').first();
+        if (article.length === 0) {
+            console.log(`未找到文章内容区域: ${newsId}`);
+            return '';
+        }
+
+        // 查找外部链接（项目真实链接）
+        let projectUrl = '';
+        article.find('a').each((_, link) => {
+            const href = $(link).attr('href');
+            const linkText = $(link).text().trim();
+
+            // 排除AIbase内部链接和无效链接
+            if (href &&
+                !href.includes('aibase.com') &&
+                !href.includes('/zh/search/') &&
+                !href.includes('/zh/news/') &&
+                !href.startsWith('#') &&
+                !href.startsWith('/') &&
+                (href.startsWith('http://') || href.startsWith('https://')) &&
+                linkText.length > 0) {
+                projectUrl = href;
+                console.log(`找到项目链接: ${href} (${linkText})`);
+                return false; // 找到第一个有效链接就停止
+            }
+        });
+
+        // 如果没有找到链接元素，尝试从段落文本中提取链接
+        if (!projectUrl) {
+            article.find('p').each((_, p) => {
+                const text = $(p).text().trim();
+                // 查找包含链接格式的文本（如"地址：https://..."）
+                const urlMatch = text.match(/(?:地址|链接|网址|URL|官网|项目地址|体验地址|访问地址|官方网站|项目网站|在线体验|试用地址)[\s:：]*([^\s，。！？；]+)/i);
+                if (urlMatch && urlMatch[1]) {
+                    const potentialUrl = urlMatch[1];
+                    // 验证是否为有效URL且不是AIbase链接
+                    if ((potentialUrl.startsWith('http://') || potentialUrl.startsWith('https://')) &&
+                        !potentialUrl.includes('aibase.com')) {
+                        projectUrl = potentialUrl;
+                        console.log(`从文本中提取到链接: ${potentialUrl}`);
+                        return false;
+                    }
+                }
+            });
+        }
+
+        return projectUrl;
+    } catch (error) {
+        console.error(`提取项目链接失败 (${newsId}):`, error);
+        return '';
+    }
+}
+
 async function getRealtimeNews(): Promise<Article> {
     try {
         const newsItems: Topic[] = [];
@@ -294,12 +357,20 @@ async function getRealtimeNews(): Promise<Article> {
                     const newsDate = new Date(item.createTime);
                     const isWithin24Hours = newsDate >= twentyFourHoursAgo;
 
+                    // 尝试提取真实的项目链接
+                    let projectUrl = '';
+                    try {
+                        projectUrl = await extractProjectUrl(item.oid);
+                    } catch (error) {
+                        console.error(`提取项目链接失败 (${item.oid}):`, error);
+                    }
+
                     // 构建新闻项目
                     const newsItem: Topic = {
                         id: topicIndex++,
                         title: item.title || '无标题',
                         summary: item.description || '暂无描述',
-                        url: `https://news.aibase.com/zh/news/${item.oid}`,
+                        url: projectUrl || `https://news.aibase.com/zh/news/${item.oid}`, // 优先使用项目链接，否则使用新闻详情页
                         image: item.thumb || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
                         video: undefined
                     };
