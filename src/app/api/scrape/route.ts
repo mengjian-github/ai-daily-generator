@@ -370,7 +370,7 @@ async function getRealtimeNews(): Promise<Article> {
                         id: topicIndex++,
                         title: item.title || '无标题',
                         summary: item.description || '暂无描述',
-                        url: projectUrl || `https://news.aibase.com/zh/news/${item.oid}`, // 优先使用项目链接，否则使用新闻详情页
+                        url: projectUrl || '', // 只使用项目链接，如果没有找到则为空
                         image: item.thumb || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
                         video: undefined
                     };
