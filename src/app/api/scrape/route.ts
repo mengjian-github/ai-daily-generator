@@ -253,14 +253,21 @@ interface ApiNewsItem {
 async function getRealtimeNews(): Promise<Article> {
     try {
         const newsItems: Topic[] = [];
+        const within24HoursItems: Topic[] = []; // 存储24小时内的新闻
         let topicIndex = 0;
         let page = 1;
-        const maxPages = 3; // 最多爬取3页
-        const targetCount = 20; // 目标新闻数量
+        const maxPages = 10; // 增加页数以确保能找到足够的新闻
+        const targetHours = 24; // 目标时间范围：24小时
+        const minNewsCount = 20; // 最少新闻数量
 
-        console.log('开始获取实时新闻数据...');
+        console.log('开始获取实时新闻数据（24小时内优先，不足20条则补充更早新闻）...');
 
-        while (page <= maxPages && newsItems.length < targetCount) {
+        // 计算24小时前的时间
+        const now = new Date();
+        const twentyFourHoursAgo = new Date(now.getTime() - targetHours * 60 * 60 * 1000);
+        console.log(`24小时时间范围: ${twentyFourHoursAgo.toLocaleString()} 至 ${now.toLocaleString()}`);
+
+        while (page <= maxPages && newsItems.length < minNewsCount) {
             try {
                 // 使用API获取数据
                 const timestamp = Date.now();
@@ -279,9 +286,13 @@ async function getRealtimeNews(): Promise<Article> {
 
                 // 处理API返回的新闻数据
                 for (const item of data.data.list) {
-                    if (newsItems.length >= targetCount) {
-                        break;
+                    if (newsItems.length >= minNewsCount) {
+                        break; // 已经达到最少新闻数量，停止处理
                     }
+
+                    // 解析新闻时间
+                    const newsDate = new Date(item.createTime);
+                    const isWithin24Hours = newsDate >= twentyFourHoursAgo;
 
                     // 构建新闻项目
                     const newsItem: Topic = {
@@ -293,8 +304,20 @@ async function getRealtimeNews(): Promise<Article> {
                         video: undefined
                     };
 
-                    newsItems.push(newsItem);
-                    console.log(`添加新闻: ${newsItem.title}`);
+                    if (isWithin24Hours) {
+                        // 24小时内的新闻，优先添加
+                        within24HoursItems.push(newsItem);
+                        newsItems.push(newsItem);
+                        console.log(`添加24小时内新闻: ${newsItem.title} (${item.createTime})`);
+                    } else {
+                        // 超过24小时的新闻，只有在不足20条时才添加
+                        if (within24HoursItems.length < minNewsCount) {
+                            newsItems.push(newsItem);
+                            console.log(`补充较早新闻: ${newsItem.title} (${item.createTime})`);
+                        } else {
+                            console.log(`跳过较早新闻（已有足够24小时内新闻）: ${newsItem.title} (${item.createTime})`);
+                        }
+                    }
                 }
 
                 page++;
@@ -304,17 +327,29 @@ async function getRealtimeNews(): Promise<Article> {
             }
         }
 
+        // 生成描述信息
+        let description: string;
+        const within24Count = within24HoursItems.length;
+        const totalCount = newsItems.length;
+
+        if (within24Count >= minNewsCount) {
+            description = `最近24小时内为您精选了 ${totalCount} 条最新AI资讯，涵盖技术突破、产品发布、行业动态等多个方面。`;
+            console.log(`返回 ${totalCount} 条新闻，全部为24小时内`);
+        } else if (within24Count > 0) {
+            const olderCount = totalCount - within24Count;
+            description = `为您精选了 ${totalCount} 条最新AI资讯，其中 ${within24Count} 条为24小时内最新资讯，${olderCount} 条为较早优质资讯，涵盖技术突破、产品发布、行业动态等多个方面。`;
+            console.log(`返回 ${totalCount} 条新闻，其中24小时内 ${within24Count} 条，较早 ${olderCount} 条`);
+        } else {
+            description = `为您精选了 ${totalCount} 条最新AI资讯，涵盖技术突破、产品发布、行业动态等多个方面。`;
+            console.log(`返回 ${totalCount} 条新闻，无24小时内新闻`);
+        }
+
         // 构建返回的文章数据
-        const now = new Date();
         const dateStr = now.toLocaleDateString('zh-CN', {
             year: 'numeric',
             month: 'long',
             day: 'numeric'
         });
-
-        const description = newsItems.length > 0
-            ? `今日为您精选了 ${newsItems.length} 条最新AI资讯，涵盖技术突破、产品发布、行业动态等多个方面。`
-            : '暂无最新资讯';
 
         return {
             title: `AI 实时资讯 - ${dateStr}`,
