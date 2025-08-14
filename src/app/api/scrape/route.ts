@@ -317,6 +317,7 @@ async function getRealtimeNews(): Promise<Article> {
     try {
         const newsItems: Topic[] = [];
         const within24HoursItems: Topic[] = []; // 存储24小时内的新闻
+        const olderNewsItems: Topic[] = []; // 存储24小时外的新闻
         let topicIndex = 0;
         let page = 1;
         const maxPages = 10; // 增加页数以确保能找到足够的新闻
@@ -330,7 +331,9 @@ async function getRealtimeNews(): Promise<Article> {
         const twentyFourHoursAgo = new Date(now.getTime() - targetHours * 60 * 60 * 1000);
         console.log(`24小时时间范围: ${twentyFourHoursAgo.toLocaleString()} 至 ${now.toLocaleString()}`);
 
-        while (page <= maxPages && newsItems.length < minNewsCount) {
+        // 第一阶段：获取所有24小时内的新闻
+        let foundOlderNews = false;
+        while (page <= maxPages && !foundOlderNews) {
             try {
                 // 使用API获取数据
                 const timestamp = Date.now();
@@ -349,10 +352,6 @@ async function getRealtimeNews(): Promise<Article> {
 
                 // 处理API返回的新闻数据
                 for (const item of data.data.list) {
-                    if (newsItems.length >= minNewsCount) {
-                        break; // 已经达到最少新闻数量，停止处理
-                    }
-
                     // 解析新闻时间
                     const newsDate = new Date(item.createTime);
                     const isWithin24Hours = newsDate >= twentyFourHoursAgo;
@@ -376,18 +375,14 @@ async function getRealtimeNews(): Promise<Article> {
                     };
 
                     if (isWithin24Hours) {
-                        // 24小时内的新闻，优先添加
+                        // 24小时内的新闻，全部添加
                         within24HoursItems.push(newsItem);
-                        newsItems.push(newsItem);
                         console.log(`添加24小时内新闻: ${newsItem.title} (${item.createTime})`);
                     } else {
-                        // 超过24小时的新闻，只有在不足20条时才添加
-                        if (within24HoursItems.length < minNewsCount) {
-                            newsItems.push(newsItem);
-                            console.log(`补充较早新闻: ${newsItem.title} (${item.createTime})`);
-                        } else {
-                            console.log(`跳过较早新闻（已有足够24小时内新闻）: ${newsItem.title} (${item.createTime})`);
-                        }
+                        // 遇到24小时外的新闻，存储起来备用
+                        olderNewsItems.push(newsItem);
+                        foundOlderNews = true;
+                        console.log(`发现24小时外新闻: ${newsItem.title} (${item.createTime})`);
                     }
                 }
 
@@ -396,6 +391,69 @@ async function getRealtimeNews(): Promise<Article> {
                 console.error(`获取第 ${page} 页失败:`, pageError);
                 break;
             }
+        }
+
+        // 第二阶段：如果24小时内新闻不足20条，继续获取更早的新闻补充
+        if (within24HoursItems.length < minNewsCount) {
+            console.log(`24小时内新闻只有 ${within24HoursItems.length} 条，需要补充 ${minNewsCount - within24HoursItems.length} 条更早的新闻`);
+
+            while (page <= maxPages && (within24HoursItems.length + olderNewsItems.length) < minNewsCount) {
+                try {
+                    const timestamp = Date.now();
+                    const apiUrl = `${API_BASE}?t=${timestamp}&langType=zh_cn&pageNo=${page}`;
+                    console.log(`正在获取第 ${page} 页数据补充更早新闻: ${apiUrl}`);
+
+                    const response = await fetchWithHeaders(apiUrl);
+                    const data: ApiResponse = JSON.parse(response);
+
+                    if (data.code !== 200 || !data.data?.list) {
+                        console.error(`第 ${page} 页API响应异常:`, data);
+                        break;
+                    }
+
+                    for (const item of data.data.list) {
+                        if ((within24HoursItems.length + olderNewsItems.length) >= minNewsCount) {
+                            break;
+                        }
+
+                        const newsDate = new Date(item.createTime);
+                        const isWithin24Hours = newsDate >= twentyFourHoursAgo;
+
+                        if (!isWithin24Hours) {
+                            let projectUrl = '';
+                            try {
+                                projectUrl = await extractProjectUrl(item.oid);
+                            } catch (error) {
+                                console.error(`提取项目链接失败 (${item.oid}):`, error);
+                            }
+
+                            const newsItem: Topic = {
+                                id: topicIndex++,
+                                title: item.title || '无标题',
+                                summary: item.description || '暂无描述',
+                                url: projectUrl || '',
+                                image: item.thumb || 'https://placehold.co/600x400/7d34ec/white?text=AI+News',
+                                video: undefined
+                            };
+
+                            olderNewsItems.push(newsItem);
+                            console.log(`补充较早新闻: ${newsItem.title} (${item.createTime})`);
+                        }
+                    }
+
+                    page++;
+                } catch (pageError) {
+                    console.error(`获取第 ${page} 页失败:`, pageError);
+                    break;
+                }
+            }
+        }
+
+        // 合并结果：24小时内的新闻 + 需要的更早新闻
+        newsItems.push(...within24HoursItems);
+        if (within24HoursItems.length < minNewsCount) {
+            const neededCount = minNewsCount - within24HoursItems.length;
+            newsItems.push(...olderNewsItems.slice(0, neededCount));
         }
 
         // 生成描述信息
