@@ -1,752 +1,782 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import FeatureStats from "@/components/FeatureStats";
 import ThemeToggle from "@/components/ThemeToggle";
-import DailyAICard from "@/components/DailyAICard";
+import ArticlePreview from "@/components/ArticlePreview";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Textarea } from "@/components/ui/textarea";
-import { AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-    Accordion,
-    AccordionContent,
-    AccordionItem,
-    AccordionTrigger,
-} from "@/components/ui/accordion";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
     Loader2,
-    Terminal,
-    Share2,
+    RefreshCw,
+    Sparkles,
+    Filter,
     Copy,
     Check,
-    Newspaper,
-    Image as ImageIcon,
-    Link2,
-    Sparkles,
     Wand2,
-    Calendar,
+    Image as ImageIcon,
     ExternalLink,
-
+    Calendar,
+    Search,
+    ChevronLeft,
+    ChevronRight,
     Clock,
-    TrendingUp,
-    Palette,
-    Play,
-    Brain,
-    Globe,
-    Zap,
-    RefreshCw,
+    ListChecks
 } from "lucide-react";
-import Image from 'next/image';
+import { articleToMarkdown, buildTemplateArticle } from "@/lib/articleBuilder";
+import { GeneratedArticle, SourceArticle, Topic } from "@/types/news";
 
-// Defines the structure of a single topic within the daily report
-interface Topic {
-    id: number;
-    title: string;
-    summary: string;
-    url: string;
-    image: string;
-    video?: string;
+type DataSource = "daily" | "realtime";
+
+const TOPICS_PER_PAGE_OPTIONS = [10, 20, 30, 40];
+
+function formatNewsTime(value?: string) {
+    if (!value) return "时间未知";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+    }).format(date);
 }
 
-// Defines the structure of the daily report article
-interface Article {
-    id: number;
-    title: string;
-    date: string;
-    source: string;
-    url: string;
-    image: string;
-    description?: string;
-    topics?: Topic[];
-}
-
-interface FetchError {
-    error: string;
-    html?: string;
-    screenshotUrl?: string;
+function mergeTopicsByOrder(orderMap: Map<number, number>, current: Topic[], additions: Topic[]) {
+    const merged = new Map<number, Topic>();
+    current.forEach((topic) => merged.set(topic.id, topic));
+    additions.forEach((topic) => merged.set(topic.id, topic));
+    return Array.from(merged.values()).sort((a, b) => {
+        const orderA = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const orderB = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return orderA - orderB;
+    });
 }
 
 export default function Home() {
-    const [articles, setArticles] = useState<Article[]>([]);
+    const [articles, setArticles] = useState<SourceArticle[]>([]);
     const [selectedTopics, setSelectedTopics] = useState<Topic[]>([]);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<FetchError | null>(null);
-    const [activeTab, setActiveTab] = useState("wechat");
-    const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
-    const [dataSource, setDataSource] = useState<"daily" | "realtime">("daily");
+    const [error, setError] = useState<string | null>(null);
+    const [dataSource, setDataSource] = useState<DataSource>("realtime");
+    const [copyState, setCopyState] = useState(false);
+    const [copyError, setCopyError] = useState<string | null>(null);
+    const [llmAvailable, setLlmAvailable] = useState(false);
+    const [llmChecked, setLlmChecked] = useState(false);
+    const [article, setArticle] = useState<GeneratedArticle | null>(null);
+    const [markdown, setMarkdown] = useState("");
+    const [articleLoading, setArticleLoading] = useState(false);
+    const [articleError, setArticleError] = useState<string | null>(null);
+    const [lastGenerationUsedLLM, setLastGenerationUsedLLM] = useState(false);
 
-    const openingText = "#AI日课 ✨\n\n大家好，我来分享今日值得关注的 AI 动态 🚀";
-    const closingText = "以上是最新 AI 精选资讯，大家 Get 了可以拍拍我哈～ 👏";
+    const [searchTerm, setSearchTerm] = useState("");
+    const [topicsPerPage, setTopicsPerPage] = useState<number>(TOPICS_PER_PAGE_OPTIONS[0]);
+    const [currentPage, setCurrentPage] = useState(0);
+    const [expandedTopics, setExpandedTopics] = useState<Record<number, boolean>>({});
+
+    const mainReport = articles[0];
+    const allTopics = useMemo(() => mainReport?.topics ?? [], [mainReport]);
+
+    const orderMap = useMemo(
+        () => new Map(allTopics.map((topic, index) => [topic.id, index])),
+        [allTopics]
+    );
+
+    useEffect(() => {
+        setCurrentPage(0);
+        setSearchTerm("");
+        setExpandedTopics({});
+        setSelectedTopics([]);
+        setArticle(null);
+        setMarkdown("");
+        setArticleError(null);
+        setLastGenerationUsedLLM(false);
+    }, [mainReport]);
+
+    useEffect(() => {
+        async function loadConfig() {
+            try {
+                const res = await fetch("/api/generate-article", { cache: "no-store" });
+                if (!res.ok) return;
+                const data = await res.json();
+                setLlmAvailable(Boolean(data.openRouterEnabled));
+            } catch {
+                setLlmAvailable(false);
+            } finally {
+                setLlmChecked(true);
+            }
+        }
+        loadConfig();
+    }, []);
+
+    const filteredTopics = useMemo(() => {
+        if (!searchTerm.trim()) {
+            return allTopics;
+        }
+        const keyword = searchTerm.trim().toLowerCase();
+        return allTopics.filter((topic) =>
+            [topic.title, topic.summary]
+                .filter(Boolean)
+                .some((field) => field.toLowerCase().includes(keyword))
+        );
+    }, [allTopics, searchTerm]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredTopics.length / topicsPerPage));
+
+    useEffect(() => {
+        if (currentPage > totalPages - 1) {
+            setCurrentPage(Math.max(totalPages - 1, 0));
+        }
+    }, [currentPage, totalPages]);
+
+    const paginatedTopics = useMemo(() => {
+        const start = currentPage * topicsPerPage;
+        return filteredTopics.slice(start, start + topicsPerPage);
+    }, [filteredTopics, currentPage, topicsPerPage]);
+
+    const selectedTopicIds = useMemo(
+        () => new Set(selectedTopics.map((topic) => topic.id)),
+        [selectedTopics]
+    );
+
+    useEffect(() => {
+        if (selectedTopics.length === 0) {
+            setArticle(null);
+            setMarkdown("");
+            setArticleError(null);
+            setLastGenerationUsedLLM(false);
+            return;
+        }
+        const template = buildTemplateArticle(selectedTopics);
+        setArticle(template);
+        setMarkdown(articleToMarkdown(template));
+        setArticleError(null);
+        setLastGenerationUsedLLM(false);
+    }, [selectedTopics]);
 
     const fetchNews = async () => {
         setLoading(true);
         setError(null);
         setArticles([]);
         setSelectedTopics([]);
+        setExpandedTopics({});
+        setCopyError(null);
+        setArticle(null);
+        setMarkdown("");
+        setArticleError(null);
+        setLastGenerationUsedLLM(false);
         try {
-            const res = await fetch(`/api/scrape?source=${dataSource}`);
+            const res = await fetch(`/api/scrape?source=${dataSource}`, { cache: "no-store" });
             const data = await res.json();
-
             if (!res.ok) {
-                setError(data);
+                setError(data.error || "获取数据失败，请稍后重试。");
             } else {
-                setArticles(data.articles);
-                if (data.articles.length > 0 && data.articles[0].topics) {
-                    setSelectedTopics(data.articles[0].topics);
-                }
+                const fetchedArticles: SourceArticle[] = data.articles || [];
+                setArticles(fetchedArticles);
             }
         } catch (err) {
-            setError({ error: err instanceof Error ? err.message : "获取数据时发生未知错误" });
+            setError(err instanceof Error ? err.message : "获取数据失败，请稍后重试。");
         } finally {
             setLoading(false);
         }
     };
 
-    const handleTopicSelection = (topic: Topic) => {
-        setSelectedTopics((prev) =>
-            prev.some((t) => t.id === topic.id)
-                ? prev.filter((t) => t.id !== topic.id)
-                : [...prev, topic]
-        );
-    };
-
-    const copyToClipboard = (content: string, id: string) => {
-        navigator.clipboard.writeText(content);
-        setCopiedStates(prev => ({ ...prev, [id]: true }));
-        setTimeout(() => {
-            setCopiedStates(prev => ({ ...prev, [id]: false }));
-        }, 2000);
-    };
-
-    const CopyButton = ({ content, id }: { content: string, id: string }) => (
-        <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => copyToClipboard(content, id)}
-            className="transition-all duration-200 hover:bg-primary/10 hover:scale-105 group"
-        >
-            {copiedStates[id] ?
-                <Check className="h-4 w-4 text-green-500" /> :
-                <Copy className="h-4 w-4 group-hover:text-primary transition-colors" />
-            }
-            <span className="ml-2 text-xs">
-                {copiedStates[id] ? "已复制" : "复制"}
-            </span>
-        </Button>
+    const handleTopicToggle = useCallback(
+        (topic: Topic, checked: boolean) => {
+            setSelectedTopics((prev) => {
+                const exists = prev.some((t) => t.id === topic.id);
+                if (checked) {
+                    if (exists) return prev;
+                    return mergeTopicsByOrder(orderMap, prev, [topic]);
+                }
+                if (!exists) return prev;
+                return prev.filter((t) => t.id !== topic.id);
+            });
+        },
+        [orderMap]
     );
 
-    const generateSocialContent = () => {
-        const dailyReport = articles[0];
-        if (!dailyReport) return "";
+    const selectTopics = useCallback(
+        (targets: Topic[]) => {
+            if (targets.length === 0) return;
+            setSelectedTopics((prev) => mergeTopicsByOrder(orderMap, prev, targets));
+        },
+        [orderMap]
+    );
 
-        // 使用与微信群格式一致的开头
-        const header = `${openingText}\n\n`;
+    const handleSelectFiltered = () => selectTopics(filteredTopics);
+    const handleSelectCurrentPage = () => selectTopics(paginatedTopics);
 
-        const topicsContent = selectedTopics
-            .map(
-                (topic, index) =>
-                    `${index + 1}. ${topic.title}` +
-                    (topic.video ? `\n🎥 视频: ${topic.video}` : "") +
-                    (topic.url ? `\n🔗 详情: ${topic.url}` : "")
-            )
-            .join("\n\n");
-        const footer = `\n\n以上是今日 AI 精选资讯，觉得有用的朋友请点个赞支持一下～ 🙏✨`;
-        return header + topicsContent + footer;
+    const handleClearSelection = () => setSelectedTopics([]);
+
+    const handleCopyArticle = async () => {
+        try {
+            setCopyError(null);
+            if (!markdown.trim()) {
+                setCopyError("没有可复制的内容，请先勾选素材或生成文章。");
+                return;
+            }
+            await navigator.clipboard.writeText(markdown);
+            setCopyState(true);
+            setTimeout(() => setCopyState(false), 2000);
+        } catch (err) {
+            setCopyError(
+                err instanceof Error ? `复制失败：${err.message}` : "复制失败，请稍后再试。"
+            );
+        }
     };
 
-    const renderSocialContent = () => {
-        const content = generateSocialContent();
+    const handleGenerateWithLLM = async () => {
+        if (selectedTopics.length === 0) {
+            setArticleError("请至少勾选一条资讯再生成日报。");
+            return;
+        }
+        setArticleLoading(true);
+        setArticleError(null);
+        try {
+            const res = await fetch("/api/generate-article", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    topics: selectedTopics,
+                    useLLM: true
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                if (data?.article) {
+                    setArticle(data.article);
+                    setMarkdown(data.markdown ?? articleToMarkdown(data.article));
+                }
+                setArticleError(data?.error || "调用 LLM 失败，请稍后重试。");
+                setLastGenerationUsedLLM(Boolean(data?.llmUsed));
+                return;
+            }
+            if (data?.article) {
+                setArticle(data.article);
+                setMarkdown(data.markdown ?? articleToMarkdown(data.article));
+            }
+            setLastGenerationUsedLLM(Boolean(data?.llmUsed));
+        } catch (err) {
+            setArticleError(err instanceof Error ? err.message : "调用 LLM 失败，请稍后再试。");
+            setLastGenerationUsedLLM(false);
+        } finally {
+            setArticleLoading(false);
+        }
+    };
+
+    const toggleExpandTopic = (topicId: number) => {
+        setExpandedTopics((prev) => ({
+            ...prev,
+            [topicId]: !prev[topicId]
+        }));
+    };
+
+    const renderTopicCard = (topic: Topic, index: number) => {
+        const isSelected = selectedTopicIds.has(topic.id);
+        const hasImage = topic.image && !topic.image.includes("placehold.co");
+        const displayImage = hasImage
+            ? topic.image.startsWith("http")
+                ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}`
+                : topic.image
+            : null;
+        const isExpanded = expandedTopics[topic.id];
+        const summaryParagraphs = topic.summary
+            ? topic.summary.split(/\n+/).filter((paragraph) => paragraph.trim().length > 0)
+            : ["暂无摘要，建议查看原文获取更多细节。"];
+        const shouldCollapse = !isExpanded && summaryParagraphs.length > 3;
+        const visibleParagraphs = shouldCollapse ? summaryParagraphs.slice(0, 3) : summaryParagraphs;
+        const showExpandToggle = summaryParagraphs.length > 3;
+
         return (
-            <div className="space-y-6">
-                <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
-                    <CardHeader className="flex flex-row items-center justify-between pb-4">
-                        <div className="flex items-center space-x-2">
-                            <div className="p-2 bg-primary/20 rounded-lg">
-                                <Share2 className="h-4 w-4 text-primary" />
+            <div
+                key={topic.id}
+                className={`rounded-xl border border-border/50 bg-card/70 p-4 transition-colors hover:border-primary/60 ${
+                    isSelected ? "border-primary/70 bg-primary/10" : ""
+                }`}
+            >
+                <div className="flex gap-4">
+                    {displayImage && (
+                        <div className="relative hidden h-28 w-40 overflow-hidden rounded-lg border border-border/40 bg-muted/40 sm:block">
+                            <Image
+                                src={displayImage}
+                                alt={topic.title}
+                                fill
+                                className="object-cover"
+                                sizes="160px"
+                            />
+                        </div>
+                    )}
+                    <div className="flex-1 space-y-3">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <label className="flex cursor-pointer items-start gap-3">
+                                <Checkbox
+                                    id={`topic-${topic.id}`}
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) =>
+                                        handleTopicToggle(topic, checked === true)
+                                    }
+                                    className="mt-1"
+                                />
+                                <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-xs uppercase tracking-[0.3em] text-primary/80">
+                                            {index + 1 < 10 ? `0${index + 1}` : index + 1}
+                                        </span>
+                                        {topic.publishedAt && (
+                                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                                                <Clock className="h-3 w-3" />
+                                                {formatNewsTime(topic.publishedAt)}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <h3 className="mt-1 text-base font-semibold leading-6 text-foreground">
+                                        {topic.title}
+                                    </h3>
+                                </div>
+                            </label>
+                            <div className="flex flex-wrap gap-2 text-sm">
+                                {topic.sourceUrl && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        asChild
+                                        className="gap-1 text-muted-foreground hover:text-primary"
+                                    >
+                                        <a href={topic.sourceUrl} target="_blank" rel="noopener noreferrer">
+                                            <ExternalLink className="h-3.5 w-3.5" />
+                                            AIbase 链接
+                                        </a>
+                                    </Button>
+                                )}
+                                {topic.url && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        asChild
+                                        className="gap-1"
+                                    >
+                                        <a href={topic.url} target="_blank" rel="noopener noreferrer">
+                                            <ExternalLink className="h-3.5 w-3.5" />
+                                            项目/官网
+                                        </a>
+                                    </Button>
+                                )}
                             </div>
-                            <CardTitle className="text-lg font-semibold">
-                                朋友圈/知识星球格式
-                            </CardTitle>
                         </div>
-                        <CopyButton content={content} id="social-main" />
-                    </CardHeader>
-                    <CardContent>
-                        <Textarea
-                            value={content}
-                            readOnly
-                            rows={selectedTopics.length > 0 ? selectedTopics.length + 10 : 5}
-                            className="w-full p-4 text-sm bg-background/80 border-border/50 rounded-lg font-mono resize-none focus:ring-2 focus:ring-primary/20"
-                        />
-                    </CardContent>
-                </Card>
-
-                <div className="space-y-4">
-                    <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg">
-                            <ImageIcon className="h-5 w-5 text-purple-600" />
-                        </div>
-                        <h3 className="text-xl font-semibold tracking-tight">配图素材</h3>
-                        <div className="flex-1 h-px bg-gradient-to-r from-border to-transparent"></div>
-                    </div>
-
-                    <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
-                        <CardContent className="p-6">
-                            {selectedTopics.filter(topic =>
-                                (topic.image && !topic.image.includes("placehold.co")) || topic.video
-                            ).length > 0 ? (
-                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                    {selectedTopics.map((topic) => (
-                                        <>
-                                            {topic.image && !topic.image.includes("placehold.co") && (
-                                                <div key={`img-social-${topic.id}`} className="group relative aspect-square">
-                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
-                                                    <Image
-                                                        src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image}
-                                                        alt={topic.title}
-                                                        fill
-                                                        className="object-cover rounded-xl shadow-md transition-transform duration-300 group-hover:scale-105"
-                                                        draggable={true}
-                                                        onContextMenu={(e) => e.stopPropagation()}
-                                                        style={{
-                                                            userSelect: 'auto',
-                                                            WebkitUserSelect: 'auto',
-                                                            MozUserSelect: 'auto'
-                                                        }}
-                                                    />
-                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-                                                        <p className="text-white text-xs font-medium truncate">{topic.title}</p>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {topic.video && (
-                                                <div key={`video-social-${topic.id}`} className="group relative aspect-square">
-                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-xl z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
-                                                    <video
-                                                        src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
-                                                        className="w-full h-full object-cover rounded-xl shadow-md transition-transform duration-300 group-hover:scale-105"
-                                                        onContextMenu={(e) => e.stopPropagation()}
-                                                        style={{
-                                                            userSelect: 'auto',
-                                                            WebkitUserSelect: 'auto',
-                                                            MozUserSelect: 'auto'
-                                                        }}
-                                                    />
-                                                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                                                        <div className="p-3 bg-white/20 backdrop-blur-sm rounded-full">
-                                                            <Play className="h-6 w-6 text-white" />
-                                                        </div>
-                                                    </div>
-                                                    <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-                                                        <p className="text-white text-xs font-medium truncate">{topic.title}</p>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-center py-12 text-muted-foreground">
-                                    <ImageIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                                    <p>暂无配图素材</p>
-                                </div>
+                        <div className="space-y-2 text-sm leading-6 text-muted-foreground">
+                            {visibleParagraphs.map((paragraph, paragraphIndex) => {
+                                const trimmed = paragraph.trim();
+                                if (trimmed.startsWith("关键要点：")) {
+                                    const points = trimmed
+                                        .replace("关键要点：", "")
+                                        .split(/\d+\.\s*/i)
+                                        .map((point) => point.trim())
+                                        .filter(Boolean);
+                                    return (
+                                        <div
+                                            key={`${topic.id}-points-${paragraphIndex}`}
+                                            className="rounded-lg border border-border/40 bg-muted/30 p-3"
+                                        >
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-primary/80">
+                                                关键要点
+                                            </p>
+                                            <ul className="mt-2 space-y-1 text-sm">
+                                                {points.map((point, pointIndex) => (
+                                                    <li key={`${topic.id}-point-${pointIndex}`} className="flex gap-2">
+                                                        <span className="text-primary">
+                                                            {pointIndex + 1}.
+                                                        </span>
+                                                        <span>{point}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <p key={`${topic.id}-paragraph-${paragraphIndex}`}>
+                                        {trimmed}
+                                    </p>
+                                );
+                            })}
+                            {showExpandToggle && (
+                                <button
+                                    onClick={() => toggleExpandTopic(topic.id)}
+                                    className="text-xs font-medium text-primary hover:text-primary/80"
+                                >
+                                    {isExpanded ? "收起内容" : `展开剩余 ${summaryParagraphs.length - 3} 段`}
+                                </button>
                             )}
-                        </CardContent>
-                    </Card>
+                        </div>
+                        {topic.video && (
+                            <div className="rounded-lg border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                含视频素材：若需要请从原文下载后单独分享。
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         );
     };
 
-    const mainReport = articles.length > 0 ? articles[0] : null;
-
-
+    const pageStart = filteredTopics.length === 0 ? 0 : currentPage * topicsPerPage + 1;
+    const pageEnd = Math.min((currentPage + 1) * topicsPerPage, filteredTopics.length);
 
     return (
-        <div className="min-h-screen text-foreground relative">
-            <div className="container mx-auto p-4 md:p-8 lg:p-12">
-                                 {/* 头部区域 */}
-                 <header className="flex flex-col lg:flex-row justify-between items-center mb-16 space-y-8 lg:space-y-0">
-                     {/* 主题切换按钮 - 固定在右上角 */}
-                     <div className="fixed top-6 right-6 z-50 lg:hidden">
-                         <ThemeToggle />
-                     </div>
-                    <div className="flex items-center space-x-6">
-                        <div className="relative">
-                            <div className="absolute inset-0 bg-gradient-to-r from-primary to-purple-600 rounded-2xl blur-lg opacity-75 animate-pulse"></div>
-                            <div className="relative p-4 bg-gradient-to-r from-primary to-purple-600 rounded-2xl shadow-2xl">
-                                <Brain className="h-10 w-10 text-white" />
-                            </div>
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-foreground">
+            <div className="container mx-auto px-4 py-10 lg:px-8">
+                <header className="mb-12 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="space-y-4">
+                        <div className="inline-flex items-center rounded-full bg-primary/10 px-4 py-1 text-sm font-medium text-primary">
+                            <Sparkles className="mr-2 h-4 w-4" />
+                            AI 日报创作工作台
                         </div>
                         <div className="space-y-2">
-                            <h1 className="text-5xl font-bold tracking-tight bg-gradient-to-r from-primary via-purple-600 to-blue-600 bg-clip-text text-transparent">
-                                AI Daily Generator
+                            <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
+                                你来甄选素材，我来整合成一篇高密度日报
                             </h1>
-                            <p className="text-lg text-muted-foreground">
-                                一键生成你的专属 AI 日报 ✨ 智能化内容创作助手
+                            <p className="max-w-2xl text-base text-muted-foreground">
+                                从 AIbase 获取资讯后，可按关键词筛选、分页浏览并勾选重点。我会把选中的内容实时生成结构化图文稿，方便你复制或继续润色。
                             </p>
-                            <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                                <div className="flex items-center space-x-1">
-                                    <Globe className="h-4 w-4" />
-                                    <span>AIbase 数据源</span>
-                                </div>
-                                <div className="flex items-center space-x-1">
-                                    <Zap className="h-4 w-4" />
-                                    <span>实时更新</span>
-                                </div>
-                                <div className="flex items-center space-x-1">
-                                    <Wand2 className="h-4 w-4" />
-                                    <span>智能格式化</span>
-                                </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                            <div className="flex items-center gap-2">
+                                <Calendar className="h-4 w-4" />
+                                {new Intl.DateTimeFormat("zh-CN", {
+                                    year: "numeric",
+                                    month: "long",
+                                    day: "numeric"
+                                }).format(new Date())}
                             </div>
+                            <div className="flex items-center gap-2">
+                                <Filter className="h-4 w-4" />
+                                当前选中 {selectedTopics.length} 条
+                            </div>
+                            {lastGenerationUsedLLM && (
+                                <div className="flex items-center gap-2 text-primary">
+                                    <Wand2 className="h-4 w-4" />
+                                    已用 DeepSeek 精修
+                                </div>
+                            )}
                         </div>
                     </div>
-
-                                         <div className="flex flex-col sm:flex-row gap-4 items-center">
-                         {/* 桌面端主题切换 */}
-                         <div className="hidden lg:block">
-                             <ThemeToggle />
-                         </div>
-
-                         {/* 数据源选择器 */}
-                         <div className="flex items-center gap-2 bg-card/50 backdrop-blur-sm border border-border/50 rounded-lg p-1">
-                             <button
-                                 onClick={() => setDataSource("daily")}
-                                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-                                     dataSource === "daily"
-                                         ? "bg-primary text-primary-foreground shadow-sm"
-                                         : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                                 }`}
-                             >
-                                 <div className="flex items-center gap-2">
-                                     <Calendar className="h-4 w-4" />
-                                     <span>日报</span>
-                                 </div>
-                             </button>
-                             <button
-                                 onClick={() => setDataSource("realtime")}
-                                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-                                     dataSource === "realtime"
-                                         ? "bg-primary text-primary-foreground shadow-sm"
-                                         : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                                 }`}
-                             >
-                                 <div className="flex items-center gap-2">
-                                     <Clock className="h-4 w-4" />
-                                     <span>实时24小时资讯</span>
-                                 </div>
-                             </button>
-                         </div>
-
-                         <Button
-                             onClick={fetchNews}
-                             disabled={loading}
-                             size="lg"
-                             className="group relative overflow-hidden bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white shadow-xl hover:shadow-2xl transition-all duration-300 px-8 py-6 text-lg"
-                         >
-                            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/25 to-white/0 transform -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
-                            {loading ? (
-                                <>
-                                    <Loader2 className="mr-3 h-5 w-5 animate-spin" />
-                                    正在获取最新资讯...
-                                </>
-                            ) : (
-                                <>
-                                    <RefreshCw className="mr-3 h-5 w-5 transition-transform duration-500 group-hover:rotate-180" />
-                                    获取最新日报
-                                </>
-                            )}
-                        </Button>
-
-                        {mainReport && (
-                            <Button
-                                variant="outline"
-                                size="lg"
-                                className="group border-border/50 hover:bg-primary/5 hover:border-primary/50 transition-all duration-300 px-6 py-6"
-                                onClick={() => window.open(mainReport.url, '_blank')}
-                            >
-                                <ExternalLink className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                                查看原文
-                            </Button>
-                        )}
-                    </div>
+                    <ThemeToggle />
                 </header>
 
-                {/* 错误提示 */}
+                <div className="mb-10 flex flex-wrap gap-3 rounded-2xl border border-border/50 bg-card/50 p-4 backdrop-blur">
+                    <button
+                        onClick={() => setDataSource("daily")}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                            dataSource === "daily"
+                                ? "bg-primary text-primary-foreground shadow-sm"
+                                : "text-muted-foreground hover:bg-muted/40"
+                        }`}
+                    >
+                        AIbase 日报精选
+                    </button>
+                    <button
+                        onClick={() => setDataSource("realtime")}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                            dataSource === "realtime"
+                                ? "bg-primary text-primary-foreground shadow-sm"
+                                : "text-muted-foreground hover:bg-muted/40"
+                        }`}
+                    >
+                        实时 24 小时资讯
+                    </button>
+
+                    <Button
+                        onClick={fetchNews}
+                        disabled={loading}
+                        size="lg"
+                        className="ml-auto flex items-center gap-2 bg-gradient-to-r from-primary to-purple-600 px-6 py-5 text-base text-primary-foreground shadow-lg transition-all hover:shadow-xl"
+                    >
+                        {loading ? (
+                            <>
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                                正在获取资讯…
+                            </>
+                        ) : (
+                            <>
+                                <RefreshCw className="h-5 w-5" />
+                                获取最新素材
+                            </>
+                        )}
+                    </Button>
+                </div>
+
                 {error && (
-                    <Card className="mb-12 border-destructive/50 bg-gradient-to-r from-destructive/5 to-red-500/5 shadow-lg">
-                        <CardHeader>
-                            <AlertTitle className="flex items-center text-destructive">
-                                <Terminal className="h-6 w-6 mr-3" />
-                                获取数据时出错了
-                            </AlertTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <AlertDescription className="text-destructive/80 text-base">
-                                {error.error}
-                            </AlertDescription>
-
-                            {error.screenshotUrl && (
-                                <Button variant="secondary" asChild className="hover:bg-secondary/80 transition-colors">
-                                    <a href={error.screenshotUrl} target="_blank" rel="noopener noreferrer">
-                                        <ImageIcon className="h-5 w-5 mr-2"/>
-                                        查看页面截图
-                                    </a>
-                                </Button>
-                            )}
-
-                            {error.html && (
-                                <div className="space-y-3">
-                                    <h3 className="font-semibold text-lg">浏览器获取到的 HTML 源码:</h3>
-                                    <Textarea
-                                        value={error.html}
-                                        readOnly
-                                        rows={20}
-                                        className="w-full p-4 font-mono text-xs bg-background/50 border-border/50 rounded-lg"
-                                    />
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                    <Alert className="mb-10 border-destructive/40 bg-destructive/10 text-destructive">
+                        <AlertTitle>数据获取失败</AlertTitle>
+                        <AlertDescription>{error}</AlertDescription>
+                    </Alert>
                 )}
 
-                {/* 加载状态 */}
                 {loading && (
-                    <div className="flex flex-col items-center justify-center py-32 space-y-6">
-                        <div className="relative">
-                            <div className="absolute inset-0 bg-gradient-to-r from-primary to-purple-600 rounded-full blur-xl opacity-75 animate-pulse"></div>
-                            <Loader2 className="relative h-16 w-16 animate-spin text-primary" />
+                    <div className="flex flex-col items-center justify-center py-24 text-center">
+                        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                        <p className="mt-4 text-base text-muted-foreground">正在刷新资讯，请稍候…</p>
+                    </div>
+                )}
+
+                {!loading && !mainReport && (
+                    <div className="rounded-3xl border border-border/50 bg-card/50 p-12 text-center shadow-xl backdrop-blur">
+                        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-primary/10">
+                            <Sparkles className="h-8 w-8 text-primary" />
                         </div>
-                        <div className="text-center space-y-2">
-                            <h3 className="text-xl font-semibold">正在获取最新 AI 资讯</h3>
-                            <p className="text-muted-foreground">请稍候，我们正在为您整理今日精彩内容...</p>
+                        <h2 className="mt-6 text-2xl font-semibold">点击上方按钮获取今日资讯素材</h2>
+                        <p className="mt-3 text-muted-foreground">
+                            你可以随意勾选想要保留的条目，我会帮你生成一篇结构完整的日报文章。
+                        </p>
+                        <div className="mt-8">
+                            <FeatureStats />
                         </div>
                     </div>
                 )}
 
-                {/* 空状态 */}
-                {!mainReport && !loading && (
-                    <div className="text-center py-32 px-6 rounded-2xl bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border border-border/50 shadow-xl">
-                        <div className="space-y-6">
-                            <div className="relative mx-auto w-24 h-24">
-                                <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-purple-500/20 rounded-full animate-pulse"></div>
-                                <div className="relative flex items-center justify-center w-full h-full bg-primary/10 rounded-full">
-                                    <Newspaper className="h-12 w-12 text-primary" />
-                                </div>
-                            </div>
-                            <div className="space-y-3">
-                                <h2 className="text-3xl font-bold tracking-tight">准备好开始了吗？</h2>
-                                <p className="text-muted-foreground text-lg max-w-2xl mx-auto leading-relaxed">
-                                    点击&ldquo;获取最新日报&rdquo;按钮，系统将自动从 AIbase 获取最新 AI 资讯，
-                                    并为您智能整理成适合各种平台分享的格式。
-                                </p>
-                            </div>
-                            <div className="flex items-center justify-center space-x-8 pt-6">
-                                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                                    <Clock className="h-4 w-4" />
-                                    <span>实时更新</span>
-                                </div>
-                                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                                    <TrendingUp className="h-4 w-4" />
-                                    <span>热点追踪</span>
-                                </div>
-                                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                                    <Palette className="h-4 w-4" />
-                                    <span>多格式输出</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* 主要内容区域 */}
                 {mainReport && (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
-                        {/* 左侧：内容选择 */}
-                        <div className="space-y-8">
-                            <div className="flex items-center space-x-3">
-                                <div className="p-2 bg-gradient-to-r from-blue-500/20 to-primary/20 rounded-lg">
-                                    <Sparkles className="h-5 w-5 text-blue-600" />
-                                </div>
-                                <h2 className="text-2xl font-semibold tracking-tight">选择分享内容</h2>
-                                <div className="flex-1 h-px bg-gradient-to-r from-border to-transparent"></div>
-                            </div>
-
-                            {mainReport.topics && (
-                                <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-xl overflow-hidden">
-                                    <CardHeader className="bg-gradient-to-r from-primary/5 to-purple-500/5 border-b border-border/50">
-                                        <div className="flex items-center space-x-3">
-                                            <Calendar className="h-5 w-5 text-primary" />
-                                            <div>
-                                                <CardTitle className="text-xl">{mainReport.title}</CardTitle>
-                                                {mainReport.date && (
-                                                    <p className="text-sm text-muted-foreground mt-1">{mainReport.date}</p>
-                                                )}
+                    <div className="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                        <section className="space-y-6">
+                            <Card className="border-border/50 bg-card/60 backdrop-blur">
+                                <CardHeader className="border-b border-border/40 pb-5">
+                                    <CardTitle className="flex flex-col gap-3 text-lg font-semibold md:flex-row md:items-start md:justify-between">
+                                        <span>素材池 · {mainReport.title}</span>
+                                        <span className="text-sm font-normal text-muted-foreground">
+                                            {mainReport.date}
+                                        </span>
+                                    </CardTitle>
+                                    {mainReport.description && (
+                                        <p className="mt-2 text-sm text-muted-foreground">
+                                            {mainReport.description}
+                                        </p>
+                                    )}
+                                    <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                onClick={handleSelectCurrentPage}
+                                                disabled={paginatedTopics.length === 0}
+                                                className="gap-1"
+                                            >
+                                                <ListChecks className="h-4 w-4" />
+                                                全选当前页
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={handleSelectFiltered}
+                                                disabled={filteredTopics.length === 0}
+                                            >
+                                                全选筛选结果
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={handleClearSelection}
+                                                disabled={selectedTopics.length === 0}
+                                            >
+                                                清空已选
+                                            </Button>
+                                            {mainReport.url && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => window.open(mainReport.url, "_blank")}
+                                                >
+                                                    <ExternalLink className="mr-2 h-4 w-4" />
+                                                    查看原始列表
+                                                </Button>
+                                            )}
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                                            <div className="relative flex items-center">
+                                                <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
+                                                <input
+                                                    type="search"
+                                                    value={searchTerm}
+                                                    onChange={(event) => {
+                                                        setSearchTerm(event.target.value);
+                                                        setCurrentPage(0);
+                                                    }}
+                                                    placeholder="搜索标题或摘要关键词"
+                                                    className="w-full rounded-lg border border-border/50 bg-background/80 py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:w-72"
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                                                    每页条数
+                                                </span>
+                                                <select
+                                                    value={topicsPerPage}
+                                                    onChange={(event) => {
+                                                        setTopicsPerPage(Number(event.target.value));
+                                                        setCurrentPage(0);
+                                                    }}
+                                                    className="rounded-md border border-border/60 bg-background/80 px-2 py-1 text-sm"
+                                                >
+                                                    {TOPICS_PER_PAGE_OPTIONS.map((option) => (
+                                                        <option key={option} value={option}>
+                                                            {option}
+                                                        </option>
+                                                    ))}
+                                                </select>
                                             </div>
                                         </div>
-                                        {mainReport.description && (
-                                            <p className="text-muted-foreground leading-relaxed mt-4">{mainReport.description}</p>
-                                        )}
-                                    </CardHeader>
-                                    <CardContent className="p-0">
-                                        <Accordion type="multiple" className="w-full">
-                                            {mainReport.topics.map((topic, index) => (
-                                                <AccordionItem
-                                                    value={`item-${topic.id}`}
-                                                    key={topic.id}
-                                                    className="border-border/30 hover:bg-primary/5 transition-colors"
-                                                >
-                                                    <div className="flex items-center space-x-4 w-full pr-6">
-                                                        <Checkbox
-                                                            id={`topic-${topic.id}`}
-                                                            checked={selectedTopics.some((t) => t.id === topic.id)}
-                                                            onCheckedChange={() => handleTopicSelection(topic)}
-                                                            className="ml-6 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                                                        />
-                                                        <AccordionTrigger className="flex-1 text-left font-semibold text-base py-6 hover:no-underline">
-                                                            <div className="flex items-center space-x-3">
-                                                                <span className="inline-flex items-center justify-center w-6 h-6 bg-primary/10 text-primary text-xs font-bold rounded-full">
-                                                                    {index + 1}
-                                                                </span>
-                                                                <span>{topic.title}</span>
-                                                            </div>
-                                                        </AccordionTrigger>
-                                                    </div>
-                                                    <AccordionContent className="pb-6 pl-16 pr-6 space-y-6">
-                                                        <div
-                                                            className="prose prose-sm max-w-none text-muted-foreground leading-relaxed"
-                                                            dangerouslySetInnerHTML={{ __html: topic.summary.replace(/\\n/g, "<br />") }}
-                                                        />
-
-                                                        {topic.image && !topic.image.includes("placehold.co") && (
-                                                            <div className="relative rounded-xl overflow-hidden border border-border/50 shadow-lg group">
-                                                                <Image
-                                                                    src={`/api/image-proxy?url=${encodeURIComponent(topic.image)}`}
-                                                                    alt={topic.title}
-                                                                    width={600}
-                                                                    height={400}
-                                                                    className="w-full h-auto transition-transform duration-300 group-hover:scale-105"
-                                                                />
-                                                            </div>
-                                                        )}
-
-                                                        {topic.video && (
-                                                            <div className="relative rounded-xl overflow-hidden border border-border/50 shadow-lg">
-                                                                <video
-                                                                    src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
-                                                                    controls
-                                                                    className="w-full"
-                                                                />
-                                                            </div>
-                                                        )}
-
-                                                        {topic.url && (
-                                                            <Button
-                                                                variant="link"
-                                                                asChild
-                                                                className="p-0 h-auto text-primary hover:text-primary/80"
-                                                            >
-                                                                <a
-                                                                    href={topic.url}
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    className="inline-flex items-center text-sm font-medium group"
-                                                                >
-                                                                    <Link2 className="mr-2 h-4 w-4 group-hover:scale-110 transition-transform" />
-                                                                    查看详情
-                                                                </a>
-                                                            </Button>
-                                                        )}
-                                                    </AccordionContent>
-                                                </AccordionItem>
-                                            ))}
-                                        </Accordion>
-                                    </CardContent>
-                                </Card>
-                            )}
-                        </div>
-
-                        {/* 右侧：格式化输出 */}
-                        {selectedTopics.length > 0 && (
-                            <div className="space-y-8">
-                                <div className="flex items-center space-x-3">
-                                    <div className="p-2 bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-lg">
-                                        <Share2 className="h-5 w-5 text-green-600" />
                                     </div>
-                                    <h2 className="text-2xl font-semibold tracking-tight">复制格式化内容</h2>
-                                    <div className="flex-1 h-px bg-gradient-to-r from-border to-transparent"></div>
-                                </div>
+                                </CardHeader>
+                                <CardContent className="space-y-4 pt-6">
+                                    {paginatedTopics.length === 0 ? (
+                                        <div className="rounded-xl border border-dashed border-border/40 bg-muted/20 p-10 text-center text-sm text-muted-foreground">
+                                            {searchTerm
+                                                ? "当前关键词没有匹配的资讯，试试其他关键词或清空筛选。"
+                                                : "暂无资讯，请稍后刷新。"}
+                                        </div>
+                                    ) : (
+                                        paginatedTopics.map((topic, index) =>
+                                            renderTopicCard(topic, currentPage * topicsPerPage + index)
+                                        )
+                                    )}
 
-                                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                                    <TabsList className="grid w-full grid-cols-3 bg-card/50 backdrop-blur-sm border border-border/50 shadow-lg">
-                                        <TabsTrigger
-                                            value="wechat"
-                                            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
+                                    <div className="flex flex-col gap-3 border-t border-border/40 pt-4 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            共 {filteredTopics.length} 条 · 正在查看{" "}
+                                            {filteredTopics.length === 0
+                                                ? "0"
+                                                : `${pageStart}-${pageEnd}`}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+                                                disabled={currentPage === 0}
+                                                className="gap-1"
+                                            >
+                                                <ChevronLeft className="h-4 w-4" />
+                                                上一页
+                                            </Button>
+                                            <span className="text-xs uppercase tracking-wide">
+                                                第 {currentPage + 1} / {totalPages} 页
+                                            </span>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() =>
+                                                    setCurrentPage((prev) => Math.min(prev + 1, totalPages - 1))
+                                                }
+                                                disabled={currentPage >= totalPages - 1}
+                                                className="gap-1"
+                                            >
+                                                下一页
+                                                <ChevronRight className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </section>
+
+                        <section className="space-y-6">
+                            <Card className="border-border/50 bg-card/60 backdrop-blur">
+                                <CardHeader className="border-b border-border/40 pb-5">
+                                    <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                                        <ImageIcon className="h-5 w-5 text-primary" />
+                                        日报文章生成
+                                    </CardTitle>
+                                    <p className="text-sm text-muted-foreground">
+                                        勾选左侧素材后，我会即时生成结构化文章。复制 Markdown 或调用 LLM 都会沿用我的常规写作风格。
+                                    </p>
+                                </CardHeader>
+                                <CardContent className="space-y-6 pt-6">
+                                    <div className="space-y-3">
+                                        <p className="text-sm font-medium text-muted-foreground">
+                                            写作说明
+                                        </p>
+                                        <p className="text-sm leading-6 text-muted-foreground">
+                                            成稿保持客观、真诚的科技解读视角，重点分析事件的价值、风险与潜在影响，开头固定以“大家好，我是孟健。”展开。
+                                            只需要继续在左侧挑选素材，然后在这里复制或调用 LLM 即可。
+                                        </p>
+                                    </div>
+
+                                    {copyError && (
+                                        <Alert className="border-destructive/40 bg-destructive/10 text-destructive">
+                                            <AlertTitle>复制失败</AlertTitle>
+                                            <AlertDescription>{copyError}</AlertDescription>
+                                        </Alert>
+                                    )}
+
+                                    {articleError && (
+                                        <Alert className="border-destructive/40 bg-destructive/10 text-destructive">
+                                            <AlertTitle>生成失败</AlertTitle>
+                                            <AlertDescription>{articleError}</AlertDescription>
+                                        </Alert>
+                                    )}
+
+                                    {!llmAvailable && llmChecked && (
+                                        <Alert className="border-border/50 bg-muted/40 text-muted-foreground">
+                                            <AlertTitle>尚未配置 LLM</AlertTitle>
+                                            <AlertDescription>
+                                                如需使用 anthropic/claude-sonnet-4.5，请在环境变量中设置
+                                                <code className="mx-1 rounded bg-muted px-2 py-0.5 text-xs">
+                                                    OPENROUTER_API_KEY
+                                                </code>
+                                                后重新加载页面。
+                                            </AlertDescription>
+                                        </Alert>
+                                    )}
+
+                                    <div className="flex flex-wrap gap-3">
+                                        <Button
+                                            variant="outline"
+                                            onClick={handleCopyArticle}
+                                            disabled={selectedTopics.length === 0 || !markdown}
+                                            className="flex items-center gap-2"
                                         >
-                                            微信群格式
-                                        </TabsTrigger>
-                                        <TabsTrigger
-                                            value="social"
-                                            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
+                                            {copyState ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                                            {copyState ? "已复制 Markdown" : "复制 Markdown"}
+                                        </Button>
+                                        <Button
+                                            onClick={handleGenerateWithLLM}
+                                            disabled={!llmAvailable || !selectedTopics.length || articleLoading}
+                                            className="flex items-center gap-2"
                                         >
-                                            朋友圈/知识星球
-                                        </TabsTrigger>
-                                        <TabsTrigger
-                                            value="daily-card"
-                                            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-200"
-                                        >
-                                            每日AI早课
-                                        </TabsTrigger>
-                                    </TabsList>
+                                            {articleLoading ? (
+                                                <>
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                    正在调用 LLM…
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Wand2 className="h-4 w-4" />
+                                                    让 LLM 成稿
+                                                </>
+                                            )}
+                                        </Button>
+                                    </div>
 
-                                                                         <TabsContent value="wechat" className="mt-6 space-y-6">
-                                         {/* 使用提示 */}
-                                         {selectedTopics.some(topic => topic.video) && (
-                                             <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50 rounded-lg p-4">
-                                                 <div className="flex items-start space-x-3">
-                                                     <div className="p-1 bg-blue-500/20 rounded-full mt-0.5">
-                                                         <Play className="h-4 w-4 text-blue-600" />
-                                                     </div>
-                                                     <div className="flex-1">
-                                                         <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-1">
-                                                             💡 视频发送提示
-                                                         </h4>
-                                                         <p className="text-xs text-blue-700 dark:text-blue-300">
-                                                             视频文件需要单独发送，不会包含在文字消息中。请先发送文字内容，然后单独发送对应的视频文件。
-                                                         </p>
-                                                     </div>
-                                                 </div>
-                                             </div>
-                                         )}
-
-                                         {/* 开场白 */}
-                                         <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
-                                            <CardHeader className="flex flex-row items-center justify-between">
-                                                <div className="flex items-center space-x-2">
-                                                    <div className="p-2 bg-blue-500/20 rounded-lg">
-                                                        <Wand2 className="h-4 w-4 text-blue-600" />
-                                                    </div>
-                                                    <CardTitle className="text-base font-medium">开场白</CardTitle>
-                                                </div>
-                                                <CopyButton content={openingText} id="wechat-opening" />
-                                            </CardHeader>
-                                            <CardContent>
-                                                <Textarea
-                                                    value={openingText}
-                                                    readOnly
-                                                    rows={3}
-                                                    className="bg-background/80 border-border/50 font-mono text-sm resize-none"
-                                                />
-                                            </CardContent>
-                                        </Card>
-
-                                                                                 {/* 资讯内容 */}
-                                         {selectedTopics.map((topic, index) => {
-                                             const topicText = `${index + 1}、${topic.title}` +
-                                                 (topic.url ? `\n🔗 详情: ${topic.url}` : "");
-                                            return (
-                                                <Card key={topic.id} className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
-                                                    <CardHeader className="flex flex-row items-center justify-between">
-                                                        <div className="flex items-center space-x-2">
-                                                            <div className="p-2 bg-primary/20 rounded-lg">
-                                                                <span className="text-xs font-bold text-primary">{index + 1}</span>
-                                                            </div>
-                                                            <CardTitle className="text-base font-medium">第 {index + 1} 条资讯</CardTitle>
-                                                        </div>
-                                                        <CopyButton content={topicText} id={`wechat-topic-${topic.id}`} />
-                                                    </CardHeader>
-                                                    <CardContent className="space-y-4">
-                                                        <Textarea
-                                                            value={topicText}
-                                                            readOnly
-                                                            rows={3}
-                                                            className="bg-background/80 border-border/50 font-mono text-sm resize-none"
-                                                        />
-
-                                                        {topic.image && !topic.image.includes("placehold.co") && (
-                                                            <div className="space-y-2">
-                                                                <h4 className="text-sm font-semibold text-muted-foreground flex items-center">
-                                                                    <ImageIcon className="h-4 w-4 mr-2" />
-                                                                    配图:
-                                                                </h4>
-                                                                <div className="relative aspect-video rounded-lg overflow-hidden border border-border/50 shadow-md group">
-                                                                    <Image
-                                                                        src={topic.image.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(topic.image)}` : topic.image}
-                                                                        alt={topic.title}
-                                                                        fill
-                                                                        className="object-contain transition-transform duration-300 group-hover:scale-105"
-                                                                    />
-                                                                </div>
-                                                            </div>
-                                                        )}
-
-                                                        {topic.video && (
-                                                                                                                         <div className="space-y-2">
-                                                                 <h4 className="text-sm font-semibold text-muted-foreground flex items-center">
-                                                                     <Play className="h-4 w-4 mr-2" />
-                                                                     视频 (单独发送):
-                                                                 </h4>
-                                                                <div className="relative rounded-lg overflow-hidden border border-border/50 shadow-md">
-                                                                    <video
-                                                                        src={`/api/image-proxy?url=${encodeURIComponent(topic.video)}`}
-                                                                        controls
-                                                                        className="w-full"
-                                                                    />
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    </CardContent>
-                                                </Card>
-                                            );
-                                        })}
-
-                                        {/* 结束语 */}
-                                        <Card className="bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 shadow-lg">
-                                            <CardHeader className="flex flex-row items-center justify-between">
-                                                <div className="flex items-center space-x-2">
-                                                    <div className="p-2 bg-green-500/20 rounded-lg">
-                                                        <Check className="h-4 w-4 text-green-600" />
-                                                    </div>
-                                                    <CardTitle className="text-base font-medium">结束语</CardTitle>
-                                                </div>
-                                                <CopyButton content={closingText} id="wechat-closing" />
-                                            </CardHeader>
-                                            <CardContent>
-                                                <Textarea
-                                                    value={closingText}
-                                                    readOnly
-                                                    rows={3}
-                                                    className="bg-background/80 border-border/50 font-mono text-sm resize-none"
-                                                />
-                                            </CardContent>
-                                        </Card>
-                                    </TabsContent>
-
-                                    <TabsContent value="social" className="mt-6">
-                                        {renderSocialContent()}
-                                    </TabsContent>
-
-                                    <TabsContent value="daily-card" className="mt-6">
-                                        <DailyAICard 
-                                            onCopy={(message) => {
-                                                console.log(message);
-                                            }}
-                                        />
-                                    </TabsContent>
-                                </Tabs>
-                            </div>
-                                                 )}
-                     </div>
-                 )}
-
-                 {/* 功能特性展示 */}
-                 {!mainReport && !loading && (
-                     <div className="mt-24">
-                         <FeatureStats />
-                     </div>
-                 )}
+                                    <div className="rounded-xl border border-border/50 bg-background/60 p-6 shadow-inner">
+                                        {selectedTopics.length > 0 && article ? (
+                                            <ArticlePreview article={article} />
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
+                                                <ImageIcon className="h-10 w-10 opacity-60" />
+                                                <p className="text-sm">
+                                                    勾选至少一条资讯，我会在这里生成完整的日报文章。
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </section>
+                    </div>
+                )}
             </div>
         </div>
     );

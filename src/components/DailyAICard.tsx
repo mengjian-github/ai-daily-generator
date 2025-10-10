@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Copy, Check, Download, RefreshCw, Image } from "lucide-react";
+import { Copy, Check, Download, RefreshCw, Image as ImageIcon } from "lucide-react";
 
 interface DailyAICardProps {
     onCopy?: (content: string) => void;
@@ -239,7 +239,7 @@ const DailyAICard: React.FC<DailyAICardProps> = ({ onCopy }) => {
                         disabled={imageLoading}
                         className="transition-all duration-200 hover:bg-primary/10"
                     >
-                        <Image className={`h-4 w-4 ${imageLoading ? 'animate-spin' : ''}`} />
+                        <ImageIcon className={`h-4 w-4 ${imageLoading ? 'animate-spin' : ''}`} />
                         <span className="ml-2">换背景</span>
                     </Button>
                     <Button
